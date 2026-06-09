@@ -136,6 +136,53 @@ class SentryOnDemandReplayTests: XCTestCase {
 
         try FileManager.default.removeItem(at: info.path)
     }
+
+    func testGenerateVideo_whenOnlyPreviousFrameExists_shouldHoldPreviousFrameFromBeginning() throws {
+        // -- Arrange --
+        let sut = getSut()
+
+        let start = Date(timeIntervalSinceReferenceDate: 0)
+        sut.addFrameAsync(timestamp: start.addingTimeInterval(4), maskedViewImage: UIImage.add)
+        sut.releaseFramesUntil(start.addingTimeInterval(5))
+
+        // -- Act --
+        let videos = sut.createVideoWith(beginning: start.addingTimeInterval(5), end: start.addingTimeInterval(10))
+
+        // -- Assert --
+        XCTAssertEqual(videos.count, 1)
+        let info = try XCTUnwrap(videos.first)
+
+        XCTAssertEqual(info.duration, 5)
+        XCTAssertEqual(info.frameCount, 5)
+        XCTAssertEqual(info.start, start.addingTimeInterval(5))
+        XCTAssertEqual(info.end, start.addingTimeInterval(10))
+
+        try FileManager.default.removeItem(at: info.path)
+    }
+
+    func testGenerateVideo_whenFirstFrameAfterBeginning_shouldHoldPreviousFrameUntilFirstFrame() throws {
+        // -- Arrange --
+        let sut = getSut()
+
+        let start = Date(timeIntervalSinceReferenceDate: 0)
+        sut.addFrameAsync(timestamp: start.addingTimeInterval(4), maskedViewImage: UIImage.add)
+        sut.addFrameAsync(timestamp: start.addingTimeInterval(7), maskedViewImage: UIImage.add)
+        sut.releaseFramesUntil(start.addingTimeInterval(5))
+
+        // -- Act --
+        let videos = sut.createVideoWith(beginning: start.addingTimeInterval(5), end: start.addingTimeInterval(10))
+
+        // -- Assert --
+        XCTAssertEqual(videos.count, 1)
+        let info = try XCTUnwrap(videos.first)
+
+        XCTAssertEqual(info.duration, 5)
+        XCTAssertEqual(info.frameCount, 5)
+        XCTAssertEqual(info.start, start.addingTimeInterval(5))
+        XCTAssertEqual(info.end, start.addingTimeInterval(10))
+
+        try FileManager.default.removeItem(at: info.path)
+    }
     
     func testAddFrameIsThreadSafe() {
         let processingQueue = SentryDispatchQueueWrapper()

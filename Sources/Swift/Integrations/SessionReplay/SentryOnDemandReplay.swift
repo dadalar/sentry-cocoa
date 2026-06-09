@@ -18,6 +18,7 @@ import UIKit
     private let processingQueue: SentryDispatchQueueWrapper
     private let assetWorkerQueue: SentryDispatchQueueWrapper
     private var _frames = [SentryReplayFrame]()
+    private var retainedFrameBeforeCurrentFrames: SentryReplayFrame?
 
     #if SENTRY_TEST || SENTRY_TEST_CI || DEBUG
     //This is exposed only for tests, no need to make it thread safe.
@@ -130,20 +131,14 @@ import UIKit
             SentrySDKLog.debug("[Session Replay] Releasing frames until date: \(date)")
             while let first = self._frames.first, first.time < date {
                 self._frames.removeFirst()
-                let fileUrl = URL(fileURLWithPath: first.imagePath)
-                do {
-                    try FileManager.default.removeItem(at: fileUrl)
-                    SentrySDKLog.debug("[Session Replay] Removed frame at url: \(fileUrl.path)")
-                } catch {
-                    SentrySDKLog.error("[Session Replay] Failed to remove frame at: \(fileUrl.path), reason: \(error), ignoring error")
-                }
+                self.replaceRetainedFrame(first)
             }
             SentrySDKLog.debug("[Session Replay] Frames released, remaining frames count: \(self._frames.count)")
         }
     }
 
     public var oldestFrameDate: Date? {
-        return _frames.first?.time
+        return retainedFrameBeforeCurrentFrames?.time ?? _frames.first?.time
     }
 
     public func createVideoInBackgroundWith(beginning: Date, end: Date, completion: @escaping ([SentryVideoInfo]) -> Void) {
@@ -162,7 +157,7 @@ import UIKit
 
         // Note: In previous implementations this method was wrapped by a sync call to the processing queue.
         // As this method is already called from the processing queue, we must remove the sync call.
-        let videoFrames = self._frames.filter { $0.time >= beginning && $0.time <= end }
+        let videoFrames = self.videoFramesForRendering(beginning: beginning, end: end)
         var frameCount = 0
 
         var videos = [SentryVideoInfo]()
@@ -219,6 +214,60 @@ import UIKit
 
         SentrySDKLog.debug("[Session Replay] Finished creating video with \(videos.count) segments")
         return videos
+    }
+
+    private func videoFramesForRendering(beginning: Date, end: Date) -> [SentryReplayFrame] {
+        guard end > beginning else { return [] }
+
+        var videoFrames = self._frames.filter { $0.time >= beginning && $0.time <= end }
+        guard let firstFrame = videoFrames.first else {
+            guard let previousFrame = frameBefore(beginning) else { return [] }
+            return [frame(previousFrame, movedTo: beginning)]
+        }
+
+        if firstFrame.time > beginning, let previousFrame = frameBefore(beginning) {
+            videoFrames.insert(frame(previousFrame, movedTo: beginning), at: 0)
+        }
+
+        return videoFrames
+    }
+
+    private func frameBefore(_ date: Date) -> SentryReplayFrame? {
+        let retainedFrame = retainedFrameBeforeCurrentFrames.flatMap { $0.time < date ? $0 : nil }
+        let currentFrame = _frames.last(where: { $0.time < date })
+
+        switch (retainedFrame, currentFrame) {
+        case (.some(let retained), .some(let current)):
+            return retained.time > current.time ? retained : current
+        case (.some(let retained), .none):
+            return retained
+        case (.none, .some(let current)):
+            return current
+        case (.none, .none):
+            return nil
+        }
+    }
+
+    private func frame(_ frame: SentryReplayFrame, movedTo time: Date) -> SentryReplayFrame {
+        return SentryReplayFrame(imagePath: frame.imagePath, time: time, screenName: frame.screenName)
+    }
+
+    private func replaceRetainedFrame(_ frame: SentryReplayFrame) {
+        if let retainedFrameBeforeCurrentFrames = retainedFrameBeforeCurrentFrames,
+            retainedFrameBeforeCurrentFrames.imagePath != frame.imagePath {
+            removeFrameFile(retainedFrameBeforeCurrentFrames)
+        }
+        retainedFrameBeforeCurrentFrames = frame
+    }
+
+    private func removeFrameFile(_ frame: SentryReplayFrame) {
+        let fileUrl = URL(fileURLWithPath: frame.imagePath)
+        do {
+            try FileManager.default.removeItem(at: fileUrl)
+            SentrySDKLog.debug("[Session Replay] Removed frame at url: \(fileUrl.path)")
+        } catch {
+            SentrySDKLog.error("[Session Replay] Failed to remove frame at: \(fileUrl.path), reason: \(error), ignoring error")
+        }
     }
 
     // swiftlint:disable function_body_length cyclomatic_complexity

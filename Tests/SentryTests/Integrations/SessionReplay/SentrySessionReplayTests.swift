@@ -178,7 +178,7 @@ class SentrySessionReplayTests: XCTestCase {
         XCTAssertTrue(sut.isRunning)
     }
 
-    func testCaptureRunLoopObserver_whenRunLoopIsTracking_shouldNotCapture() {
+    func testCaptureFrame_whenRunLoopIsTracking_shouldThrottleCapture() {
         // -- Arrange --
         let fixture = Fixture()
         let sut = fixture.getSut(options: SentryReplayOptions(sessionSampleRate: 1, onErrorSampleRate: 1))
@@ -186,10 +186,20 @@ class SentrySessionReplayTests: XCTestCase {
 
         // -- Act --
         fixture.dateProvider.advance(by: 1)
-        runRunLoop(mode: .tracking)
+        sut.captureFrameForTesting(isInteractiveRunLoopMode: true)
 
         // -- Assert --
-        XCTAssertEqual(fixture.screenshotProvider.imageCallCount, 0)
+        XCTAssertEqual(fixture.screenshotProvider.imageCallCount, 1)
+
+        fixture.dateProvider.advance(by: 0.5)
+        sut.captureFrameForTesting(isInteractiveRunLoopMode: true)
+
+        XCTAssertEqual(fixture.screenshotProvider.imageCallCount, 1)
+
+        fixture.dateProvider.advance(by: 0.51)
+        sut.captureFrameForTesting(isInteractiveRunLoopMode: true)
+
+        XCTAssertEqual(fixture.screenshotProvider.imageCallCount, 2)
     }
     
     func testSentReplay_FullSession() {
@@ -199,10 +209,9 @@ class SentrySessionReplayTests: XCTestCase {
         sut.start(rootView: fixture.rootView, fullSession: true)
         XCTAssertEqual(fixture.lastReplayId, sut.sessionReplayId)
         
+        let sessionStart = fixture.dateProvider.date()
+
         fixture.dateProvider.advance(by: 1)
-        
-        let startEvent = fixture.dateProvider.date()
-        
         Dynamic(sut).newFrame(nil)
         fixture.dateProvider.advance(by: 5)
         Dynamic(sut).newFrame(nil)
@@ -212,8 +221,8 @@ class SentrySessionReplayTests: XCTestCase {
             return
         }
         
-        XCTAssertEqual(videoArguments.end, startEvent.addingTimeInterval(5))
-        XCTAssertEqual(videoArguments.beginning, startEvent)
+        XCTAssertEqual(videoArguments.end, sessionStart.addingTimeInterval(5))
+        XCTAssertEqual(videoArguments.beginning, sessionStart)
         
         XCTAssertNotNil(fixture.lastReplayRecording)
         assertFullSession(sut, expected: true)
@@ -232,9 +241,9 @@ class SentrySessionReplayTests: XCTestCase {
                 
         let urls = try XCTUnwrap(fixture.lastReplayEvent?.urls)
         
-        guard urls.count == 6 else {
-        	XCTFail("Expected 6 screen names")
-        	return
+        guard urls.count == 5 else {
+            XCTFail("Expected 5 screen names")
+            return
         }
         XCTAssertEqual(urls[0], "Screen 1")
         XCTAssertEqual(urls[1], "Screen 2")
@@ -403,6 +412,21 @@ class SentrySessionReplayTests: XCTestCase {
         
         XCTAssertNotNil(fixture.screenshotProvider.lastImageCall)
     }
+
+    func testNewFrame_whenBufferModeExceedsSegmentDuration_shouldNotPrepareSegment() {
+        // -- Arrange --
+        let fixture = Fixture()
+        let sut = fixture.getSut(options: SentryReplayOptions(sessionSampleRate: 0, onErrorSampleRate: 1))
+        sut.start(rootView: fixture.rootView, fullSession: false)
+
+        // -- Act --
+        fixture.dateProvider.advance(by: 6)
+        Dynamic(sut).newFrame(nil)
+
+        // -- Assert --
+        XCTAssertNotNil(fixture.screenshotProvider.lastImageCall)
+        XCTAssertNil(fixture.replayMaker.lastCallToCreateVideo)
+    }
     
     func testPauseResume_FullSession() {
         let fixture = Fixture()
@@ -518,7 +542,7 @@ class SentrySessionReplayTests: XCTestCase {
         fixture.dateProvider.advance(by: 5)
         Dynamic(sut).newFrame(nil)
         
-        let endOfFirstSegment = fixture.dateProvider.date()
+        let endOfFirstSegment = TestCurrentDateProvider.defaultStartingDate.addingTimeInterval(5)
         
         //Advancing 2 seconds to start another segment at second 7
         //This means session replay didnt capture screens between seconds 5 and 7
@@ -531,12 +555,9 @@ class SentrySessionReplayTests: XCTestCase {
             // we should capture all touch events since the end of the first segment.
             
             XCTAssertEqual(begin, endOfFirstSegment)
-            XCTAssertEqual(end, fixture.dateProvider.date())
+            XCTAssertEqual(end, endOfFirstSegment.addingTimeInterval(5))
             expect.fulfill()
         }
-        
-        // This will make the mock videoInfo starts at second 7 as well
-        fixture.replayMaker.overrideBeginning = Date(timeIntervalSinceReferenceDate: 7)
         
         //Advancing another 5 seconds to close the second segment
         fixture.dateProvider.advance(by: 5)
@@ -805,7 +826,7 @@ class SentrySessionReplayTests: XCTestCase {
         XCTAssertEqual(fixture.screenshotProvider.imageCallCount, 2)
     }
 
-    func testNewFrame_whenScrollViewIsDragging_shouldDeferScreenshotTemporarily() {
+    func testNewFrame_whenScrollViewIsDragging_shouldCaptureAtFrameRate() {
         // -- Arrange --
         let fixture = Fixture()
         let sut = fixture.getSut(options: SentryReplayOptions(sessionSampleRate: 1, onErrorSampleRate: 1))
@@ -818,12 +839,69 @@ class SentrySessionReplayTests: XCTestCase {
         Dynamic(sut).newFrame(nil)
 
         // -- Assert --
-        XCTAssertEqual(fixture.screenshotProvider.imageCallCount, 0)
+        XCTAssertEqual(fixture.screenshotProvider.imageCallCount, 1)
 
-        fixture.dateProvider.advance(by: 1.01)
+        fixture.dateProvider.advance(by: 0.5)
         Dynamic(sut).newFrame(nil)
 
         XCTAssertEqual(fixture.screenshotProvider.imageCallCount, 1)
+
+        fixture.dateProvider.advance(by: 0.51)
+        Dynamic(sut).newFrame(nil)
+
+        XCTAssertEqual(fixture.screenshotProvider.imageCallCount, 2)
+    }
+
+    func testNewFrame_whenInteractionCaptureIsSlow_shouldNotBackOffCaptureInterval() {
+        // -- Arrange --
+        let fixture = Fixture()
+        let options = SentryReplayOptions(sessionSampleRate: 1, onErrorSampleRate: 1)
+        options.frameRate = 1
+        fixture.screenshotProvider.beforeComplete = {
+            fixture.dateProvider.advance(by: 0.06)
+        }
+        let sut = fixture.getSut(options: options)
+        let scrollView = DraggingScrollView(frame: fixture.rootView.bounds)
+        fixture.rootView.addSubview(scrollView)
+        sut.start(rootView: fixture.rootView, fullSession: true)
+
+        // -- Act --
+        fixture.dateProvider.advance(by: 1)
+        Dynamic(sut).newFrame(nil)
+        let capturesAfterSlowInteractionFrame = fixture.screenshotProvider.imageCallCount
+        fixture.screenshotProvider.beforeComplete = nil
+
+        fixture.dateProvider.advance(by: 1)
+        Dynamic(sut).newFrame(nil)
+
+        // -- Assert --
+        XCTAssertEqual(capturesAfterSlowInteractionFrame, 1)
+        XCTAssertEqual(fixture.screenshotProvider.imageCallCount, 2)
+    }
+
+    func testNewFrame_whenScreenshotDeferredPastSegmentDuration_shouldPrepareSegment() throws {
+        // -- Arrange --
+        let fixture = Fixture()
+        let replayOptions = SentryReplayOptions(sessionSampleRate: 1, onErrorSampleRate: 1)
+        replayOptions.frameRate = 1
+        let sut = fixture.getSut(options: replayOptions)
+        let scrollView = DraggingScrollView(frame: fixture.rootView.bounds)
+        fixture.rootView.addSubview(scrollView)
+        sut.start(rootView: fixture.rootView, fullSession: true)
+
+        // -- Act --
+        fixture.dateProvider.advance(by: 6)
+        Dynamic(sut).newFrame(nil)
+
+        // -- Assert --
+        XCTAssertEqual(fixture.screenshotProvider.imageCallCount, 1)
+
+        let createVideoCall = try XCTUnwrap(fixture.replayMaker.lastCallToCreateVideo)
+        XCTAssertEqual(createVideoCall.beginning, TestCurrentDateProvider.defaultStartingDate)
+        XCTAssertEqual(createVideoCall.end, TestCurrentDateProvider.defaultStartingDate.addingTimeInterval(5))
+
+        let recording = try XCTUnwrap(fixture.lastReplayRecording)
+        XCTAssertEqual(recording.segmentId, 0)
     }
 
     func testNewFrame_whenViewHasManyActiveAnimations_shouldDeferScreenshotTemporarily() {
