@@ -40,6 +40,7 @@
 ### Improvements
 
 - Remove `enableSessionReplayInUnreliableEnvironment` experimental option and the environment checker that temporarily disabled Session Replay on iOS 26 (#7831)
+- Reduce Session Replay capture stutters by driving full-session captures from run loop activity and avoiding tracking-mode captures (#7851)
 
 ### Features
 
