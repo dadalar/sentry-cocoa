@@ -36,6 +36,8 @@ import UIKit
     private var captureRunLoopObserver: CFRunLoopObserver?
     private var didProcessRunLoopWork = false
     private var isCaptureSchedulerRunning = false
+    private var nextCaptureActivityCheckAt: Date?
+    private var pendingSegmentEnd: Date?
     public var replayTags: [String: Any]?
 
     var isRunning: Bool {
@@ -84,6 +86,7 @@ import UIKit
         scheduleNextScreenshot(after: screenshotInterval, from: now)
         startCaptureScheduler()
         videoSegmentStart = nil
+        pendingSegmentEnd = nil
         currentSegmentId = 0
         sessionReplayId = SentryId()
         imageCollection = []
@@ -239,19 +242,20 @@ import UIKit
             return
         }
         
-        if let sessionStart = sessionStart, isFullSession && now.timeIntervalSince(sessionStart) > replayOptions.maximumDuration {
-            SentrySDKLog.debug("[Session Replay] Reached maximum duration, pausing session")
-            reachedMaximumDuration = true
-            pause()
-            // Notify the delegate that the session replay has ended so it can clear the session replay id.
-            delegate?.sessionReplayEnded()
+        guard !pauseIfMaximumDurationReached(at: now) else { return }
+
+        guard shouldCheckCaptureActivity(at: now, isInteractiveRunLoopMode: isInteractiveRunLoopMode) else {
+            prepareFullSessionSegmentsIfNeeded(until: now)
             return
         }
 
-        let captureActivityReason = rootView.flatMap { captureGuard.captureActivityReason(rootView: $0) }
+        let captureActivityReason = isInteractiveRunLoopMode
+            ? nil
+            : rootView.flatMap { captureGuard.captureActivityReason(rootView: $0) }
         let isInteractionCapture = isInteractiveRunLoopMode || captureActivityReason == .interaction
 
         guard shouldCaptureScreenshot(at: now, usesAdaptiveBackoff: !isInteractionCapture) else {
+            scheduleNextCaptureActivityCheck(after: nextCaptureActivityCheckInterval(from: now), from: now)
             prepareFullSessionSegmentsIfNeeded(until: now)
             return
         }
@@ -310,6 +314,42 @@ import UIKit
 
     private func scheduleNextScreenshot(after interval: TimeInterval, from date: Date) {
         nextScreenshotAt = date.addingTimeInterval(interval)
+        scheduleNextCaptureActivityCheck(after: min(interval, baseScreenshotInterval), from: date)
+    }
+
+    private func shouldCheckCaptureActivity(at date: Date, isInteractiveRunLoopMode: Bool) -> Bool {
+        if isInteractiveRunLoopMode {
+            return shouldCaptureScreenshot(at: date, usesAdaptiveBackoff: false)
+        }
+
+        if shouldCaptureScreenshot(at: date) {
+            return true
+        }
+
+        guard let nextCaptureActivityCheckAt = nextCaptureActivityCheckAt else { return true }
+        return date.timeIntervalSince(nextCaptureActivityCheckAt) >= -screenshotIntervalTolerance
+    }
+
+    private func nextCaptureActivityCheckInterval(from date: Date) -> TimeInterval {
+        guard let nextScreenshotAt = nextScreenshotAt else { return baseScreenshotInterval }
+        return max(0, min(baseScreenshotInterval, nextScreenshotAt.timeIntervalSince(date)))
+    }
+
+    private func scheduleNextCaptureActivityCheck(after interval: TimeInterval, from date: Date) {
+        nextCaptureActivityCheckAt = date.addingTimeInterval(interval)
+    }
+
+    private func pauseIfMaximumDurationReached(at date: Date) -> Bool {
+        guard let sessionStart = sessionStart,
+            isFullSession,
+            date.timeIntervalSince(sessionStart) > replayOptions.maximumDuration
+        else { return false }
+
+        SentrySDKLog.debug("[Session Replay] Reached maximum duration, pausing session")
+        reachedMaximumDuration = true
+        pause()
+        delegate?.sessionReplayEnded()
+        return true
     }
 
     private func startCaptureScheduler() {
@@ -322,6 +362,7 @@ import UIKit
     private func stopCaptureScheduler() {
         isCaptureSchedulerRunning = false
         didProcessRunLoopWork = false
+        nextCaptureActivityCheckAt = nil
 
         if let captureRunLoopObserver = captureRunLoopObserver {
             CFRunLoopRemoveObserver(CFRunLoopGetMain(), captureRunLoopObserver, .commonModes)
@@ -436,17 +477,26 @@ import UIKit
 
     private func prepareFullSessionSegmentsIfNeeded(until date: Date) {
         guard isFullSession else { return }
+        let sessionSegmentDuration = replayOptions.sessionSegmentDuration
+        guard sessionSegmentDuration > 0 else {
+            SentrySDKLog.debug("[Session Replay] Not preparing segment, reason: session segment duration is not positive")
+            return
+        }
+        guard pendingSegmentEnd == nil else { return }
 
         if videoSegmentStart == nil {
             videoSegmentStart = sessionStart ?? date
         }
 
-        guard var segmentStart = videoSegmentStart else { return }
-        while date.timeIntervalSince(segmentStart) >= replayOptions.sessionSegmentDuration {
-            let segmentEnd = segmentStart.addingTimeInterval(replayOptions.sessionSegmentDuration)
-            prepareSegment(from: segmentStart, until: segmentEnd)
-            videoSegmentStart = segmentEnd
-            segmentStart = segmentEnd
+        guard let segmentStart = videoSegmentStart else { return }
+        guard date.timeIntervalSince(segmentStart) >= sessionSegmentDuration else { return }
+
+        let segmentEnd = segmentStart.addingTimeInterval(sessionSegmentDuration)
+        pendingSegmentEnd = segmentEnd
+        if !prepareSegment(from: segmentStart, until: segmentEnd, completion: { [weak self] in
+            self?.pendingSegmentEnd = nil
+        }) {
+            pendingSegmentEnd = nil
         }
     }
 
@@ -456,16 +506,21 @@ import UIKit
         videoSegmentStart = date
     }
 
-    private func prepareSegment(from segmentStart: Date, until date: Date) {
+    @discardableResult
+    private func prepareSegment(
+        from segmentStart: Date,
+        until date: Date,
+        completion: (() -> Void)? = nil
+    ) -> Bool {
         SentrySDKLog.debug("[Session Replay] Preparing segment until date: \(date)")
         guard date > segmentStart else {
             SentrySDKLog.debug("[Session Replay] Not preparing segment, reason: segment duration is empty")
-            return
+            return false
         }
 
         guard var pathToSegment = urlToCache?.appendingPathComponent("segments") else { 
             SentrySDKLog.debug("[Session Replay] Not preparing segment, reason: could not create path to segments folder")
-            return 
+            return false
         }
 
         let fileManager = FileManager.default
@@ -475,20 +530,31 @@ import UIKit
                 SentrySDKLog.debug("[Session Replay] Created segments folder at path: \(pathToSegment.path)")
             } catch {
                 SentrySDKLog.debug("Can't create session replay segment folder. Error: \(error.localizedDescription)")
-                return
+                return false
             }
         }
 
         pathToSegment = pathToSegment.appendingPathComponent("\(currentSegmentId).mp4")
 
-        createAndCaptureInBackground(startedAt: segmentStart, endedAt: date, replayType: replayType)
+        createAndCaptureInBackground(
+            startedAt: segmentStart,
+            endedAt: date,
+            replayType: replayType,
+            completion: completion
+        )
+        return true
     }
 
     private func createAndCaptureInBackground(startedAt: Date, replayType: SentryReplayType) {
         createAndCaptureInBackground(startedAt: startedAt, endedAt: dateProvider.date(), replayType: replayType)
     }
 
-    private func createAndCaptureInBackground(startedAt: Date, endedAt: Date, replayType: SentryReplayType) {
+    private func createAndCaptureInBackground(
+        startedAt: Date,
+        endedAt: Date,
+        replayType: SentryReplayType,
+        completion: (() -> Void)? = nil
+    ) {
         SentrySDKLog.debug("[Session Replay] Creating replay video started at date: \(startedAt), replayType: \(replayType)")
         // Creating a video is computationally expensive, therefore perform it on a background queue.
         self.replayMaker.createVideoInBackgroundWith(beginning: startedAt, end: endedAt) { videos in
@@ -496,6 +562,7 @@ import UIKit
             for video in videos {
                 self.processNewlyAvailableSegment(videoInfo: video, replayType: replayType)
             }
+            completion?()
             SentrySDKLog.debug("[Session Replay] Finished processing replay video with \(videos.count) segments")
         }
     }

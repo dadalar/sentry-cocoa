@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import Foundation
 @_spi(Private) @testable import Sentry
 @_spi(Private) import SentryTestUtils
@@ -25,6 +26,25 @@ class SentrySessionReplayTests: XCTestCase {
     private class DraggingScrollView: UIScrollView {
         override var isDragging: Bool { true }
     }
+
+    private class CountingScrollView: UIScrollView {
+        var interactionStateReadCount = 0
+
+        override var isDragging: Bool {
+            interactionStateReadCount += 1
+            return false
+        }
+
+        override var isDecelerating: Bool {
+            interactionStateReadCount += 1
+            return false
+        }
+
+        override var isTracking: Bool {
+            interactionStateReadCount += 1
+            return false
+        }
+    }
      
     private class TestTouchTracker: SentryTouchTracker {
         var replayEventsCallback: ((Date, Date) -> Void)?
@@ -46,6 +66,7 @@ class SentrySessionReplayTests: XCTestCase {
             var end: Date
         }
         
+        var createVideoResults = [[SentryVideoInfo]]()
         var lastCallToCreateVideo: CreateVideoCall?
         func createVideoInBackgroundWith(
             beginning: Date,
@@ -60,6 +81,13 @@ class SentrySessionReplayTests: XCTestCase {
 
         func createVideoWith(beginning: Date, end: Date) -> [Sentry.SentryVideoInfo] {
             lastCallToCreateVideo = CreateVideoCall(beginning: beginning, end: end)
+
+            if !createVideoResults.isEmpty {
+                let videos = createVideoResults.removeFirst()
+                videos.forEach { createVideoCallBack?($0) }
+                return videos
+            }
+
             let outputFileURL = FileManager.default.temporaryDirectory.appendingPathComponent("tempvideo.mp4")
             
             XCTAssertNoThrow(try "Video Data".write(to: outputFileURL, atomically: true, encoding: .utf8))
@@ -426,6 +454,51 @@ class SentrySessionReplayTests: XCTestCase {
         // -- Assert --
         XCTAssertNotNil(fixture.screenshotProvider.lastImageCall)
         XCTAssertNil(fixture.replayMaker.lastCallToCreateVideo)
+    }
+
+    func testNewFrame_whenSessionSegmentDurationIsNotPositive_shouldNotPrepareSegment() {
+        for duration in [0, -1] {
+            // -- Arrange --
+            let fixture = Fixture()
+            let replayOptions = SentryReplayOptions(sessionSampleRate: 1, onErrorSampleRate: 1)
+            replayOptions.sessionSegmentDuration = TimeInterval(duration)
+            let sut = fixture.getSut(options: replayOptions)
+            sut.start(rootView: fixture.rootView, fullSession: true)
+
+            // -- Act --
+            fixture.dateProvider.advance(by: 6)
+            Dynamic(sut).newFrame(nil)
+
+            // -- Assert --
+            XCTAssertNil(fixture.replayMaker.lastCallToCreateVideo)
+            XCTAssertNil(fixture.lastReplayRecording)
+        }
+    }
+
+    func testNewFrame_whenSegmentCreationReturnsNoVideo_shouldRetrySameSegmentWindow() throws {
+        // -- Arrange --
+        let fixture = Fixture()
+        fixture.replayMaker.createVideoResults = [[]]
+        let sut = fixture.getSut(options: SentryReplayOptions(sessionSampleRate: 1, onErrorSampleRate: 1))
+        sut.start(rootView: fixture.rootView, fullSession: true)
+
+        // -- Act --
+        fixture.dateProvider.advance(by: 6)
+        Dynamic(sut).newFrame(nil)
+        let firstCall = try XCTUnwrap(fixture.replayMaker.lastCallToCreateVideo)
+
+        fixture.dateProvider.advance(by: 1)
+        Dynamic(sut).newFrame(nil)
+        let secondCall = try XCTUnwrap(fixture.replayMaker.lastCallToCreateVideo)
+
+        // -- Assert --
+        let expectedStart = TestCurrentDateProvider.defaultStartingDate
+        let expectedEnd = expectedStart.addingTimeInterval(5)
+        XCTAssertEqual(firstCall.beginning, expectedStart)
+        XCTAssertEqual(firstCall.end, expectedEnd)
+        XCTAssertEqual(secondCall.beginning, expectedStart)
+        XCTAssertEqual(secondCall.end, expectedEnd)
+        XCTAssertNotNil(fixture.lastReplayRecording)
     }
     
     func testPauseResume_FullSession() {
@@ -794,6 +867,30 @@ class SentrySessionReplayTests: XCTestCase {
         }
         
         XCTAssertEqual(screenshotCount, 5, "Should have taken exactly 5 screenshots in 1 second for 5 FPS")
+    }
+
+    func testNewFrame_whenCaptureIntervalNotReached_shouldNotScanViewHierarchy() {
+        // -- Arrange --
+        let fixture = Fixture()
+        let scrollView = CountingScrollView(frame: fixture.rootView.bounds)
+        fixture.rootView.addSubview(scrollView)
+        let sut = fixture.getSut(options: SentryReplayOptions(sessionSampleRate: 1, onErrorSampleRate: 1))
+        sut.start(rootView: fixture.rootView, fullSession: true)
+        scrollView.interactionStateReadCount = 0
+
+        // -- Act --
+        fixture.dateProvider.advance(by: 0.5)
+        Dynamic(sut).newFrame(nil)
+
+        // -- Assert --
+        XCTAssertEqual(scrollView.interactionStateReadCount, 0)
+        XCTAssertEqual(fixture.screenshotProvider.imageCallCount, 0)
+
+        fixture.dateProvider.advance(by: 0.5)
+        Dynamic(sut).newFrame(nil)
+
+        XCTAssertGreaterThan(scrollView.interactionStateReadCount, 0)
+        XCTAssertEqual(fixture.screenshotProvider.imageCallCount, 1)
     }
 
     func testNewFrame_whenScreenshotCaptureIsSlow_shouldBackOffCaptureInterval() {
