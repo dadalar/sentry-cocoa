@@ -593,6 +593,32 @@ class SentrySessionReplayTests: XCTestCase {
         XCTAssertEqual(secondCall.beginning, expectedStart)
         XCTAssertEqual(secondCall.end, expectedStart.addingTimeInterval(3))
     }
+
+    func testPause_whenScreenshotCaptureIsPending_shouldNotPrepareSegmentAfterCompletion() throws {
+        // -- Arrange --
+        let fixture = Fixture()
+        fixture.screenshotProvider.completeAsync = true
+        let sut = fixture.getSut(options: SentryReplayOptions(sessionSampleRate: 1, onErrorSampleRate: 1))
+        sut.start(rootView: fixture.rootView, fullSession: true)
+
+        // -- Act --
+        fixture.dateProvider.advance(by: 6)
+        Dynamic(sut).newFrame(nil)
+        sut.pause()
+        let createCallsAfterPause = fixture.replayMaker.createVideoCalls
+
+        fixture.dateProvider.advance(by: 6)
+        fixture.screenshotProvider.completePendingImage()
+        let createCallsAfterScreenshotCompletes = fixture.replayMaker.createVideoCalls
+
+        // -- Assert --
+        XCTAssertEqual(createCallsAfterPause.count, 1)
+        XCTAssertEqual(createCallsAfterScreenshotCompletes.count, 1)
+
+        let pauseCall = try XCTUnwrap(createCallsAfterPause.last)
+        XCTAssertEqual(pauseCall.beginning, TestCurrentDateProvider.defaultStartingDate)
+        XCTAssertEqual(pauseCall.end, TestCurrentDateProvider.defaultStartingDate.addingTimeInterval(6))
+    }
     
     func testPauseResume_FullSession() {
         let fixture = Fixture()

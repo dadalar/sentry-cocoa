@@ -356,7 +356,7 @@ import UIKit
             let finishedAt = self.dateProvider.date()
             self.lastScreenshotAt = finishedAt
             self.scheduleNextScreenshot(after: self.screenshotInterval(usesAdaptiveBackoff: !isInteractionCapture), from: finishedAt)
-            self.prepareFullSessionSegmentsIfNeeded(until: finishedAt)
+            self.prepareFullSessionSegmentsAfterScreenshotIfNeeded(until: finishedAt)
         }
     }
 
@@ -587,6 +587,15 @@ import UIKit
                 }
             }
         }
+    }
+
+    private func prepareFullSessionSegmentsAfterScreenshotIfNeeded(until date: Date) {
+        let shouldPrepareSegment = lock.synchronized {
+            isCaptureSchedulerRunning && !isSessionPaused && !reachedMaximumDuration
+        }
+        guard shouldPrepareSegment else { return }
+
+        prepareFullSessionSegmentsIfNeeded(until: date)
     }
 
     private func completePendingSegment(until segmentEnd: Date) {
