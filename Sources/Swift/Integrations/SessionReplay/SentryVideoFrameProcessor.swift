@@ -30,7 +30,6 @@ class SentryVideoFrameProcessor {
     private var videoStart: Date?
     private var lastAppendedImage: UIImage?
     private var lastAppendedFrame: SentryReplayFrame?
-    private var placeholderFrameImage: UIImage?
 
     init(
         videoFrames: [SentryReplayFrame],
@@ -232,6 +231,13 @@ class SentryVideoFrameProcessor {
                 return completion(.success(videoResult))
             case .completed:
                 SentrySDKLog.debug("[Session Replay] Finish writing video was completed, creating video info from file attributes.")
+                guard !self.usedFrames.isEmpty else {
+                    SentrySDKLog.debug("[Session Replay] Finished video writing without appended frames, completing with no video info")
+                    self.removeOutputFile()
+                    let videoResult = SentryRenderVideoResult(info: nil, finalFrameIndex: frameIndex)
+                    return completion(.success(videoResult))
+                }
+
                 do {
                     let videoInfo = try self.getVideoInfo(
                         from: self.outputFileURL,
@@ -289,6 +295,17 @@ class SentryVideoFrameProcessor {
 }
 
 private extension SentryVideoFrameProcessor {
+    func removeOutputFile() {
+        guard FileManager.default.fileExists(atPath: outputFileURL.path) else { return }
+
+        do {
+            try FileManager.default.removeItem(at: outputFileURL)
+            SentrySDKLog.debug("[Session Replay] Removed empty replay video at url: \(outputFileURL.path)")
+        } catch {
+            SentrySDKLog.warning("[Session Replay] Could not delete empty replay video at url: \(outputFileURL.path), reason: \(error)")
+        }
+    }
+
     func processUnreadableFrame(
         _ frame: SentryReplayFrame,
         videoWriterInput: AVAssetWriterInput,
@@ -304,28 +321,9 @@ private extension SentryVideoFrameProcessor {
             return true
         }
 
-        SentrySDKLog.warning("[Session Replay] Could not load initial replay frame image, appending a blank frame.")
-        guard handleAppendResult(
-            append(image: placeholderFrame(), forFrame: frame, videoWriterInput: videoWriterInput),
-            onCompletion: onCompletion
-        ) else { return false }
-
+        SentrySDKLog.warning("[Session Replay] Could not load initial replay frame image, skipping frame.")
         frameIndex += 1
         return true
-    }
-
-    func placeholderFrame() -> UIImage {
-        if let placeholderFrameImage = placeholderFrameImage {
-            return placeholderFrameImage
-        }
-
-        let size = CGSize(width: videoWidth, height: videoHeight)
-        let image = SentryGraphicsImageRenderer(size: size, scale: 1).image { context in
-            UIColor.white.setFill()
-            context.cgContext.fill(CGRect(origin: .zero, size: size))
-        }
-        placeholderFrameImage = image
-        return image
     }
 }
 

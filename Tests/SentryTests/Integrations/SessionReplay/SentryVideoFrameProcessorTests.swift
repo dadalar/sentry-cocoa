@@ -405,14 +405,13 @@ class SentryVideoFrameProcessorTests: XCTestCase {
         }
     }
 
-    func testProcessFrames_WhenInitialImageCannotBeLoaded_ShouldUsePlaceholderFrame() {
+    func testProcessFrames_WhenInitialImageCannotBeLoaded_ShouldSkipFrame() {
         let videoWriterInput = TestAVAssetWriterInput(mediaType: .video, outputSettings: nil)
         let completionInvocations = Invocations<Result<SentryRenderVideoResult, any Error>>()
-        let frameTime = Date(timeIntervalSinceReferenceDate: 1)
 
         // Create frames with non-existent image paths
         let nonExistentFrames = [
-            SentryReplayFrame(imagePath: "/another/non/existent/path.png", time: frameTime, screenName: "Screen2")
+            SentryReplayFrame(imagePath: "/another/non/existent/path.png", time: Date(timeIntervalSinceReferenceDate: 1), screenName: "Screen2")
         ]
 
         let sutWithNonExistentFrames = SentryVideoFrameProcessor(
@@ -430,11 +429,8 @@ class SentryVideoFrameProcessorTests: XCTestCase {
         sutWithNonExistentFrames.processFrames(videoWriterInput: videoWriterInput) { completionInvocations.record($0) }
 
         XCTAssertEqual(sutWithNonExistentFrames.frameIndex, 1)
-        XCTAssertEqual(sutWithNonExistentFrames.usedFrames.count, 1)
-        XCTAssertEqual(sutWithNonExistentFrames.usedFrames.first?.time, frameTime)
-        XCTAssertEqual(sutWithNonExistentFrames.usedFrames.first?.screenName, "Screen2")
-        XCTAssertEqual(fixture.currentPixelBuffer.appendInvocations.count, 1)
-        XCTAssertEqual(fixture.currentPixelBuffer.appendInvocations.invocations.first?.image.size, fixture.initialImageSize)
+        XCTAssertEqual(sutWithNonExistentFrames.usedFrames.count, 0)
+        XCTAssertEqual(fixture.currentPixelBuffer.appendInvocations.count, 0)
     }
 
     func testProcessFrames_WhenTrailingImageCannotBeLoaded_ShouldHoldPreviousFrame() throws {
@@ -512,6 +508,35 @@ class SentryVideoFrameProcessorTests: XCTestCase {
             }
         default:
             XCTFail("Expected success result")
+        }
+    }
+
+    func testFinishVideo_WhenWriterCompletedWithoutUsedFrames_ShouldReturnNilVideoInfo() throws {
+        let sut = fixture.getSut()
+        let videoWriterInput = TestAVAssetWriterInput(mediaType: .video, outputSettings: nil)
+        fixture.videoWriter.add(videoWriterInput)
+        fixture.videoWriter.statusOverride = .completed
+        let completionInvocations = Invocations<Result<SentryRenderVideoResult, any Error>>()
+
+        try Data("empty video data".utf8).write(to: fixture.outputFileURL)
+
+        sut.finishVideo(frameIndex: 1) { result in
+            completionInvocations.record(result)
+        }
+
+        XCTAssertEqual(videoWriterInput.markAsFinishedInvocations.count, 1)
+        XCTAssertEqual(completionInvocations.count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.outputFileURL.path))
+
+        let result = completionInvocations.invocations.first
+        XCTAssertNotNil(result)
+
+        switch result {
+        case .success(let videoResult):
+            XCTAssertEqual(videoResult.finalFrameIndex, 1)
+            XCTAssertNil(videoResult.info)
+        default:
+            XCTFail("Expected success result with nil info")
         }
     }
 
