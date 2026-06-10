@@ -148,7 +148,7 @@ import UIKit
         }
 
         if shouldStartCaptureScheduler {
-            startCaptureScheduler()
+            resetCapturePacingAndStartScheduler()
         }
     }
 
@@ -161,7 +161,7 @@ import UIKit
         }
 
         if shouldStartCaptureScheduler {
-            startCaptureScheduler()
+            resetCapturePacingAndStartScheduler()
         }
     }
 
@@ -180,8 +180,6 @@ import UIKit
         }
         
         videoSegmentStart = nil
-        let now = dateProvider.date()
-        resetCapturePacingLocked(at: now)
         return true
     }
 
@@ -340,13 +338,6 @@ import UIKit
         scheduleNextScreenshot(after: screenshotInterval, from: date)
     }
 
-    private func resetCapturePacingLocked(at date: Date) {
-        lastScreenshotAt = date
-        adaptiveScreenshotInterval = 0
-        deferredScreenshotStart = nil
-        scheduleNextScreenshotLocked(after: screenshotInterval, from: date)
-    }
-
     private func completeScreenshotCapture(
         deferralDecision: ScreenshotDeferralDecision,
         isInteractionCapture: Bool,
@@ -390,11 +381,6 @@ import UIKit
     private func scheduleNextScreenshot(after interval: TimeInterval, from date: Date) {
         nextScreenshotAt = date.addingTimeInterval(interval)
         scheduleNextCaptureActivityCheck(after: min(interval, baseScreenshotInterval), from: date)
-    }
-
-    private func scheduleNextScreenshotLocked(after interval: TimeInterval, from date: Date) {
-        nextScreenshotAt = date.addingTimeInterval(interval)
-        nextCaptureActivityCheckAt = date.addingTimeInterval(min(interval, baseScreenshotInterval))
     }
 
     private func shouldCheckCaptureActivity(at date: Date, isInteractiveRunLoopMode: Bool) -> Bool {
@@ -453,6 +439,15 @@ import UIKit
         }
     }
 
+    private func resetCapturePacingAndStartScheduler() {
+        runOnMainThread { [weak self] in
+            guard let self = self else { return }
+
+            self.resetCapturePacing(at: self.dateProvider.date())
+            self.startCaptureScheduler()
+        }
+    }
+
     private func stopCaptureScheduler() {
         let observerToRemove = lock.synchronized {
             isCaptureSchedulerRunning = false
@@ -490,7 +485,7 @@ import UIKit
 
             self?.captureOnRunLoopActivity(
                 activity,
-                in: CFRunLoopCopyCurrentMode(CFRunLoopGetCurrent())
+                in: RunLoop.current.currentMode
             )
         }
 
@@ -508,7 +503,7 @@ import UIKit
         }
     }
 
-    private func captureOnRunLoopActivity(_ activity: CFRunLoopActivity, in currentMode: CFRunLoopMode?) {
+    private func captureOnRunLoopActivity(_ activity: CFRunLoopActivity, in currentMode: RunLoop.Mode?) {
         let shouldCapture = lock.synchronized {
             guard isCaptureSchedulerRunning else { return false }
 
@@ -531,9 +526,9 @@ import UIKit
         captureFrameIfNeeded(isInteractiveRunLoopMode: isInteractiveRunLoopMode)
     }
 
-    private func isInteractiveRunLoopMode(_ currentMode: CFRunLoopMode?) -> Bool {
+    private func isInteractiveRunLoopMode(_ currentMode: RunLoop.Mode?) -> Bool {
         guard let currentMode = currentMode else { return false }
-        return CFEqual(currentMode.rawValue, RunLoop.Mode.tracking.rawValue as CFString)
+        return currentMode == .tracking
     }
 
     private enum ScreenshotDeferralDecision {
