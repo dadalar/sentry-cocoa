@@ -614,7 +614,7 @@ class SentrySessionReplayTests: XCTestCase {
         Dynamic(sut).newFrame(nil)
         XCTAssertNil(fixture.replayMaker.lastCallToCreateVideo)
         
-        sut.resume()
+        sut.resumeSessionMode()
         
         fixture.dateProvider.advance(by: 1)
         Dynamic(sut).newFrame(nil)
@@ -640,7 +640,7 @@ class SentrySessionReplayTests: XCTestCase {
         Dynamic(sut).newFrame(nil)
         XCTAssertNil(fixture.screenshotProvider.lastImageCall)
 
-        sut.resume()
+        sut.resumeSessionMode()
         fixture.dateProvider.advance(by: 1)
         Dynamic(sut).newFrame(nil)
         XCTAssertNotNil(fixture.screenshotProvider.lastImageCall)

@@ -480,7 +480,7 @@ public class SentrySessionReplayIntegration: NSObject, SwiftIntegration, SentryS
     // MARK: - SentryReachabilityObserver
     public func connectivityChanged(_ connected: Bool, typeDescription: String) {
         SentrySDKLog.debug("[Session Replay] Connectivity changed to: \(connected ? "connected" : "disconnected"), type: \(typeDescription)")
-        if connected { sessionReplay?.resume() } else { sessionReplay?.pauseSessionMode() }
+        if connected { sessionReplay?.resumeSessionMode() } else { sessionReplay?.pauseSessionMode() }
     }
     
     // MARK: - Test only

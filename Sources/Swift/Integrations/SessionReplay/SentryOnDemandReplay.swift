@@ -150,10 +150,14 @@ import UIKit
     }
 
     public var oldestFrameDate: Date? {
-        let retainedFrame = retainedFrameLock.synchronized {
-            retainedFrameBeforeCurrentFrames
+        var oldestFrameDate: Date?
+        processingQueue.dispatchSync {
+            let retainedFrame = self.retainedFrameLock.synchronized {
+                self.retainedFrameBeforeCurrentFrames
+            }
+            oldestFrameDate = retainedFrame?.time ?? self._frames.first?.time
         }
-        return retainedFrame?.time ?? _frames.first?.time
+        return oldestFrameDate
     }
 
     public func createVideoInBackgroundWith(beginning: Date, end: Date, completion: @escaping ([SentryVideoInfo]) -> Void) {

@@ -87,8 +87,8 @@ import UIKit
             videoSegmentStart = nil
             pendingSegmentEnd = nil
             pendingPauseSegmentEnd = nil
+            currentSegmentId = 0
         }
-        currentSegmentId = 0
         sessionReplayId = SentryId()
         imageCollection = []
         replayType = fullSession ? .session : .buffer
@@ -141,27 +141,45 @@ import UIKit
 
     public func resume() {
         SentrySDKLog.debug("[Session Replay] Resuming session")
-        lock.lock()
-        defer { lock.unlock() }
-        
-        if isSessionPaused {
-            isSessionPaused = false
-            return
+        let shouldStartCaptureScheduler = lock.synchronized {
+            prepareCaptureSchedulerResume()
         }
-        
+
+        if shouldStartCaptureScheduler {
+            startCaptureScheduler()
+        }
+    }
+
+    func resumeSessionMode() {
+        SentrySDKLog.debug("[Session Replay] Resuming session mode")
+        let shouldStartCaptureScheduler = lock.synchronized {
+            isSessionPaused = false
+            return prepareCaptureSchedulerResume()
+        }
+
+        if shouldStartCaptureScheduler {
+            startCaptureScheduler()
+        }
+    }
+
+    private func prepareCaptureSchedulerResume() -> Bool {
+        if isSessionPaused {
+            return false
+        }
+
         guard !reachedMaximumDuration else { 
             SentrySDKLog.warning("[Session Replay] Reached maximum duration, not resuming")
-            return 
+            return false
         }
         guard !isRunning else { 
             SentrySDKLog.debug("[Session Replay] Session is already running, not resuming")
-            return 
+            return false
         }
         
         videoSegmentStart = nil
         let now = dateProvider.date()
         resetCapturePacing(at: now)
-        startCaptureScheduler()
+        return true
     }
 
     public func captureReplayFor(event: Event) {
@@ -599,7 +617,7 @@ import UIKit
             return false
         }
 
-        guard var pathToSegment = urlToCache?.appendingPathComponent("segments") else { 
+        guard let pathToSegment = urlToCache?.appendingPathComponent("segments") else {
             SentrySDKLog.debug("[Session Replay] Not preparing segment, reason: could not create path to segments folder")
             return false
         }
@@ -614,8 +632,6 @@ import UIKit
                 return false
             }
         }
-
-        pathToSegment = pathToSegment.appendingPathComponent("\(currentSegmentId).mp4")
 
         createAndCaptureInBackground(
             startedAt: segmentStart,
@@ -655,7 +671,13 @@ import UIKit
             SentrySDKLog.warning("[Session Replay] No session replay ID available, ignoring segment.")
             return
         }
-        captureSegment(segment: currentSegmentId, video: videoInfo, replayId: sessionReplayId, replayType: replayType)
+        let segmentId = lock.synchronized { () -> Int in
+            let segmentId = currentSegmentId
+            currentSegmentId++
+            return segmentId
+        }
+
+        captureSegment(segment: segmentId, video: videoInfo, replayId: sessionReplayId, replayType: replayType)
         replayMaker.releaseFramesUntil(videoInfo.end)
         lock.synchronized {
             if let segmentStart = videoSegmentStart {
@@ -666,8 +688,7 @@ import UIKit
                 videoSegmentStart = videoInfo.end
             }
         }
-        currentSegmentId++
-        SentrySDKLog.debug("[Session Replay] Processed segment, incrementing currentSegmentId to: \(currentSegmentId)")
+        SentrySDKLog.debug("[Session Replay] Processed segment, incrementing currentSegmentId to: \(segmentId + 1)")
     }
     
     private func captureSegment(segment: Int, video: SentryVideoInfo, replayId: SentryId, replayType: SentryReplayType) {
