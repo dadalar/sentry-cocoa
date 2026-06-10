@@ -405,13 +405,14 @@ class SentryVideoFrameProcessorTests: XCTestCase {
         }
     }
 
-    func testProcessFrames_WhenImageCannotBeLoaded_ShouldSkipFrame() {
+    func testProcessFrames_WhenInitialImageCannotBeLoaded_ShouldUsePlaceholderFrame() {
         let videoWriterInput = TestAVAssetWriterInput(mediaType: .video, outputSettings: nil)
         let completionInvocations = Invocations<Result<SentryRenderVideoResult, any Error>>()
+        let frameTime = Date(timeIntervalSinceReferenceDate: 1)
 
         // Create frames with non-existent image paths
         let nonExistentFrames = [
-            SentryReplayFrame(imagePath: "/another/non/existent/path.png", time: Date(), screenName: "Screen2")
+            SentryReplayFrame(imagePath: "/another/non/existent/path.png", time: frameTime, screenName: "Screen2")
         ]
 
         let sutWithNonExistentFrames = SentryVideoFrameProcessor(
@@ -428,9 +429,12 @@ class SentryVideoFrameProcessorTests: XCTestCase {
 
         sutWithNonExistentFrames.processFrames(videoWriterInput: videoWriterInput) { completionInvocations.record($0) }
 
-        // Should still increment frame index even if image can't be loaded
         XCTAssertEqual(sutWithNonExistentFrames.frameIndex, 1)
-        XCTAssertEqual(sutWithNonExistentFrames.usedFrames.count, 0)
+        XCTAssertEqual(sutWithNonExistentFrames.usedFrames.count, 1)
+        XCTAssertEqual(sutWithNonExistentFrames.usedFrames.first?.time, frameTime)
+        XCTAssertEqual(sutWithNonExistentFrames.usedFrames.first?.screenName, "Screen2")
+        XCTAssertEqual(fixture.currentPixelBuffer.appendInvocations.count, 1)
+        XCTAssertEqual(fixture.currentPixelBuffer.appendInvocations.invocations.first?.image.size, fixture.initialImageSize)
     }
 
     func testProcessFrames_WhenTrailingImageCannotBeLoaded_ShouldHoldPreviousFrame() throws {

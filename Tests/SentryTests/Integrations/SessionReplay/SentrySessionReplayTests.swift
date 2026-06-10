@@ -246,6 +246,25 @@ class SentrySessionReplayTests: XCTestCase {
         XCTAssertTrue(sut.isRunning)
     }
 
+    func testPause_FromBackgroundThread_ShouldStopCaptureScheduler() {
+        // -- Arrange --
+        let fixture = Fixture()
+        let sut = fixture.getSut()
+        sut.start(rootView: fixture.rootView, fullSession: false)
+        let expectation = expectation(description: "Pause from background")
+
+        // -- Act --
+        DispatchQueue.global().async {
+            sut.pause()
+            expectation.fulfill()
+        }
+
+        wait(for: [expectation], timeout: 1)
+
+        // -- Assert --
+        XCTAssertFalse(sut.isRunning)
+    }
+
     func testCaptureFrame_whenRunLoopIsTracking_shouldThrottleCapture() {
         // -- Arrange --
         let fixture = Fixture()

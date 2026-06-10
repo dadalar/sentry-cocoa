@@ -30,6 +30,7 @@ class SentryVideoFrameProcessor {
     private var videoStart: Date?
     private var lastAppendedImage: UIImage?
     private var lastAppendedFrame: SentryReplayFrame?
+    private var placeholderFrameImage: UIImage?
 
     init(
         videoFrames: [SentryReplayFrame],
@@ -91,13 +92,7 @@ class SentryVideoFrameProcessor {
     ) -> Bool {
         let frame = videoFrames[frameIndex]
         guard let image = UIImage(contentsOfFile: frame.imagePath) else {
-            guard handleAppendResult(
-                appendLastFrame(until: frame.time, videoWriterInput: videoWriterInput),
-                onCompletion: onCompletion
-            ) else { return false }
-
-            frameIndex += 1
-            return true
+            return processUnreadableFrame(frame, videoWriterInput: videoWriterInput, onCompletion: onCompletion)
         }
 
         guard handleAppendResult(
@@ -290,6 +285,47 @@ class SentryVideoFrameProcessor {
             fileSize: fileSize,
             screens: usedFrames.compactMap({ $0.screenName })
         )
+    }
+}
+
+private extension SentryVideoFrameProcessor {
+    func processUnreadableFrame(
+        _ frame: SentryReplayFrame,
+        videoWriterInput: AVAssetWriterInput,
+        onCompletion: @escaping (Result<SentryRenderVideoResult, Error>) -> Void
+    ) -> Bool {
+        guard lastAppendedImage == nil else {
+            guard handleAppendResult(
+                appendLastFrame(until: frame.time, videoWriterInput: videoWriterInput),
+                onCompletion: onCompletion
+            ) else { return false }
+
+            frameIndex += 1
+            return true
+        }
+
+        SentrySDKLog.warning("[Session Replay] Could not load initial replay frame image, appending a blank frame.")
+        guard handleAppendResult(
+            append(image: placeholderFrame(), forFrame: frame, videoWriterInput: videoWriterInput),
+            onCompletion: onCompletion
+        ) else { return false }
+
+        frameIndex += 1
+        return true
+    }
+
+    func placeholderFrame() -> UIImage {
+        if let placeholderFrameImage = placeholderFrameImage {
+            return placeholderFrameImage
+        }
+
+        let size = CGSize(width: videoWidth, height: videoHeight)
+        let image = SentryGraphicsImageRenderer(size: size, scale: 1).image { context in
+            UIColor.white.setFill()
+            context.cgContext.fill(CGRect(origin: .zero, size: size))
+        }
+        placeholderFrameImage = image
+        return image
     }
 }
 
