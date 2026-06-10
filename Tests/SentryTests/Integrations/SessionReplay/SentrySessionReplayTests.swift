@@ -722,6 +722,29 @@ class SentrySessionReplayTests: XCTestCase {
         Dynamic(sut).newFrame(nil)
         XCTAssertNil(fixture.screenshotProvider.lastImageCall)
     }
+
+    func testResume_whenBufferSessionModePaused_shouldRestartCaptureScheduler() {
+        let fixture = Fixture()
+
+        let sut = fixture.getSut(options: SentryReplayOptions(sessionSampleRate: 0, onErrorSampleRate: 1))
+        sut.start(rootView: fixture.rootView, fullSession: false)
+
+        sut.pauseSessionMode()
+        sut.pause()
+        XCTAssertFalse(sut.isRunning)
+
+        sut.resume()
+        XCTAssertTrue(sut.isRunning)
+
+        fixture.dateProvider.advance(by: 1)
+        Dynamic(sut).newFrame(nil)
+        XCTAssertEqual(fixture.screenshotProvider.imageCallCount, 1)
+
+        let event = Event(error: NSError(domain: "Some error", code: 1))
+        sut.captureReplayFor(event: event)
+
+        XCTAssertNotNil(fixture.replayMaker.lastCallToCreateVideo)
+    }
     
     func testFilterCloseNavigationBreadcrumbs() {
         let fixture = Fixture()
@@ -911,6 +934,27 @@ class SentrySessionReplayTests: XCTestCase {
             XCTAssertTrue(sut.isRunning)
         }
 
+        XCTAssertNil(weakSut)
+    }
+
+    @available(iOS 16.0, tvOS 16, *)
+    func testDealloc_DoesNotRetainSessionReplayDuringAsyncScreenshot() {
+        let fixture = Fixture()
+        fixture.screenshotProvider.completeAsync = true
+
+        weak var weakSut: SentrySessionReplay?
+        autoreleasepool {
+            let sut = fixture.getSut(options: SentryReplayOptions(sessionSampleRate: 1, onErrorSampleRate: 1))
+            weakSut = sut
+            sut.start(rootView: fixture.rootView, fullSession: true)
+
+            fixture.dateProvider.advance(by: 1)
+            Dynamic(sut).newFrame(nil)
+            XCTAssertEqual(fixture.screenshotProvider.imageCallCount, 1)
+        }
+
+        XCTAssertNil(weakSut)
+        fixture.screenshotProvider.completePendingImage()
         XCTAssertNil(weakSut)
     }
 

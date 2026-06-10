@@ -166,7 +166,7 @@ import UIKit
     }
 
     private func prepareCaptureSchedulerResume() -> Bool {
-        if isSessionPaused {
+        if isFullSession && isSessionPaused {
             return false
         }
 
