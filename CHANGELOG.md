@@ -2,6 +2,218 @@
 
 ## Unreleased
 
+### Features
+
+- Support creating envelope items from attachments via SentryObjC (#8001)
+- Add format-string logging to `SentryObjCLogger` with automatic message template extraction (#7996)
+
+  ```objc
+  [SentryObjCSDK.logger infoWithFormat:@"User %@ processed %d items", userName, count];
+  ```
+- Add managed user feedback form presentation APIs (#7873)
+
+  Apps using the managed User Feedback integration can now present the form directly:
+  - Use `SentrySDK.feedback.show()` to let the SDK pick the best presenter.
+  - In UIKit, present the `SentrySDK.FeedbackForm()` view controller yourself.
+  - In SwiftUI, use `.sentryFeedback(isPresented:)`, or present `SentrySDK.FeedbackFormView()` from a container such as `.sheet`.
+
+  These APIs use the global `SentryOptions.configureUserFeedback` configuration and temporarily hide the managed widget
+  while the form is open, when possible.
+- Add per-form feedback configuration (#8018)
+
+  Managed feedback presentation APIs now accept a configuration closure, so apps can customize a single
+  form on top of the global `SentryOptions.configureUserFeedback` settings without mutating them:
+
+  ```swift
+  SentrySDK.feedback.show { config in
+      config.configureForm = { form in
+          form.formTitle = "Report a Bug"
+          form.submitButtonLabel = "Send Report"
+      }
+      config.tags = ["screen": "settings"]
+  }
+  ```
+- Standalone app start sub-spans operations have been renamed for better clarity (#8003):
+  - Pre Runtime Init: app.start	-> app.start.pre_runtime_init
+  - Runtime Init to Pre Main Initializers: app.start -> app.start.runtime_init
+  - UIKit Init: app.start -> app.start.uikit_init
+  - Application Init: app.start -> app.start.application_init
+  - Extended App Start: app.start -> app.start.extended_app_start
+
+### Deprecations
+
+- Deprecate the managed User Feedback widget/FAB. It will be removed in v10. Present the feedback form from your own UI with `SentrySDK.feedback.show()`, `SentrySDK.FeedbackForm`, or `.sentryFeedback(isPresented:)` instead. (#8022)
+
+### Fixes
+
+- App start duration on the Vitals dashboard now reflects the extended app launch time when using `extendAppLaunch()` (#8028)
+
+## 9.16.1
+
+> [!NOTE]
+> No documented changes. This is the same as 9.16.0, re-released to fix the SentryObjC-Static SPM checksum.
+
+> [!IMPORTANT]
+> The new SentryObjC SDK introduced in this release should be considered experimental and may be subject to breaking changes.
+
+### Features
+
+- Add SentryObjC wrapper SDK — a pure Objective-C interface for projects that cannot enable Clang modules (e.g., ObjC++ with `-fmodules=NO`). (#7918)
+
+  Ships as a compile-from-source SPM product `SentryObjC`, a static pre-compiled framework `SentryObjC-Static.xcframework.zip` and a dynamic pre-compiled framework `SentryObjC-Dynamic.xcframework.zip`.
+
+  Steps to migrate:
+  - Replace your dependency on the target `Sentry` or `SentrySPM` with `SentryObjC` (or `SentryObjC-Static` / `SentryObjC-Dynamic` if you want to use the precompiled binary targets).
+  - Change `#import <Sentry/Sentry.h>` to `#import <SentryObjC/SentryObjC.h>`
+  - Rename `Sentry`-prefixed types to `SentryObjC` (e.g., `SentrySDK` → `SentryObjCSDK`, `SentryOptions` → `SentryObjCOptions`).
+- `SentrySDK.extendAppLaunch()` now returns the extended app launch span, allowing users to add child spans for granular breakdown of the app start period (#7985)
+
+### Fixes
+
+- Fix crash in `SentryFramesTracker.add/removeListener` when called from a listener's own `init` / `deinit` on a background thread, observed on iOS 26 (#7943)
+- Report only `cold` or `warm` as `start_type` for standalone app starts, removing the `.prewarmed` suffix per sentry-conventions (#7968)
+- Fix reporting arbitrary Objective-C object throws via the C++ exception monitor (#7984)
+
+## 9.16.0
+
+> [!WARNING]
+> The `SentryObjC-Static` SPM binary target in this release has an incorrect checksum and resolving dependencies might fail, but the release artifacts are not affected.
+
+> [!IMPORTANT]
+> The new SentryObjC SDK introduced in this release should be considered experimental and may be subject to breaking changes.
+
+### Features
+
+- Add SentryObjC wrapper SDK — a pure Objective-C interface for projects that cannot enable Clang modules (e.g., ObjC++ with `-fmodules=NO`). (#7918)
+
+  Ships as a compile-from-source SPM product `SentryObjC`, a static pre-compiled framework `SentryObjC-Static.xcframework.zip` and a dynamic pre-compiled framework `SentryObjC-Dynamic.xcframework.zip`.
+
+  Steps to migrate:
+  - Replace your dependency on the target `Sentry` or `SentrySPM` with `SentryObjC` (or `SentryObjC-Static` / `SentryObjC-Dynamic` if you want to use the precompiled binary targets).
+  - Change `#import <Sentry/Sentry.h>` to `#import <SentryObjC/SentryObjC.h>`
+  - Rename `Sentry`-prefixed types to `SentryObjC` (e.g., `SentrySDK` → `SentryObjCSDK`, `SentryOptions` → `SentryObjCOptions`).
+- `SentrySDK.extendAppLaunch()` now returns the extended app launch span, allowing users to add child spans for granular breakdown of the app start period (#7985)
+
+### Fixes
+
+- Fix crash in `SentryFramesTracker.add/removeListener` when called from a listener's own `init` / `deinit` on a background thread, observed on iOS 26 (#7943)
+- Report only `cold` or `warm` as `start_type` for standalone app starts, removing the `.prewarmed` suffix per sentry-conventions (#7968)
+- Fix reporting arbitrary Objective-C object throws via the C++ exception monitor (#7984)
+
+## 9.16.0-alpha.3
+
+> [!IMPORTANT]
+> The new SentryObjC SDK introduced in this release should be considered experimental and may be subject to breaking changes.
+
+### Features
+
+- Add SentryObjC wrapper SDK — a pure Objective-C interface for projects that cannot enable Clang modules (e.g., ObjC++ with `-fmodules=NO`). (#7918)
+
+  Ships as a compile-from-source SPM product `SentryObjC`, a static pre-compiled framework `SentryObjC-Static.xcframework.zip` and a dynamic pre-compiled framework `SentryObjC-Dynamic.xcframework.zip`.
+
+  Steps to migrate:
+  - Replace your dependency on the target `Sentry` or `SentrySPM` with `SentryObjC` (or `SentryObjC-Static` / `SentryObjC-Dynamic` if you want to use the precompiled binary targets).
+  - Change `#import <Sentry/Sentry.h>` to `#import <SentryObjC/SentryObjC.h>`
+  - Rename `Sentry`-prefixed types to `SentryObjC` (e.g., `SentrySDK` → `SentryObjCSDK`, `SentryOptions` → `SentryObjCOptions`).
+
+### Fixes
+
+- Fix crash in `SentryFramesTracker.add/removeListener` when called from a listener's own `init` / `deinit` on a background thread, observed on iOS 26 (#7943)
+- Report only `cold` or `warm` as `start_type` for standalone app starts, removing the `.prewarmed` suffix per sentry-conventions (#7968)
+- Fix reporting arbitrary Objective-C object throws via the C++ exception monitor (#7984)
+
+## 9.16.0-alpha.2
+
+> [!IMPORTANT]
+> The new SentryObjC SDK introduced in this release should be considered experimental and may be subject to breaking changes.
+
+### Features
+
+- Add SentryObjC wrapper SDK — a pure Objective-C interface for projects that cannot enable Clang modules (e.g., ObjC++ with `-fmodules=NO`). Ships as `SentryObjC-Dynamic.xcframework.zip` and as a compile-from-source SPM product. (#7918)
+  Steps to migrate:
+  - Replace your dependency on `Sentry` with `SentryObjC` (SPM product or xcframework)
+  - Change `#import <Sentry/Sentry.h>` to `#import <SentryObjC/SentryObjC.h>`
+  - Rename `Sentry`-prefixed types to `SentryObjC` (e.g., `SentrySDK` → `SentryObjCSDK`, `SentryOptions` → `SentryObjCOptions`).
+
+### Fixes
+
+- Fix crash in `SentryFramesTracker.add/removeListener` when called from a listener's own `init` / `deinit` on a background thread, observed on iOS 26 (#7943)
+- Report only `cold` or `warm` as `start_type` for standalone app starts, removing the `.prewarmed` suffix per sentry-conventions (#7968)
+
+## 9.16.0-alpha.1
+
+> [!IMPORTANT]
+> The new SentryObjC SDK introduced in this release should be considered experimental and may be subject to breaking changes.
+
+### Features
+
+- Add SentryObjC wrapper SDK — a pure Objective-C interface for projects that cannot enable Clang modules (e.g., ObjC++ with `-fmodules=NO`). Ships as `SentryObjC-Dynamic.xcframework.zip` and as a compile-from-source SPM product. (#7918)
+  Steps to migrate:
+  - Replace your dependency on `Sentry` with `SentryObjC` (SPM product or xcframework)
+  - Change `#import <Sentry/Sentry.h>` to `#import <SentryObjC/SentryObjC.h>`
+  - Rename `Sentry`-prefixed types to `SentryObjC` (e.g., `SentrySDK` → `SentryObjCSDK`, `SentryOptions` → `SentryObjCOptions`).
+
+### Fixes
+
+- Fix crash in `SentryFramesTracker.add/removeListener` when called from a listener's own `init` / `deinit` on a background thread, observed on iOS 26 (#7943)
+
+## 9.15.0
+
+### Features
+
+- Add `SentrySDK.extendAppLaunch()` and `SentrySDK.finishExtendedAppLaunch()` to extend standalone app start spans beyond the default end point (e.g. include initial data loading). Call `extendAppLaunch()` after `SentrySDK.start(options:)` and before the app start transaction is created, then call `finishExtendedAppLaunch()` when your app is fully ready. Requires `options.experimental.enableStandaloneAppStartTracing = true`. (#7936)
+- Skip max app start duration limit for standalone app start tracing (#7949)
+
+### Fixes
+
+- Fix UIViewController transactions lost during launch profiling (#7920)
+
+## 9.14.0
+
+### Features
+
+- Add standalone app start tracing as an experimental option (#7660), enable it via `options.experimental.enableStandaloneAppStartTracing = true`
+
+### Fixes
+
+- Defer Session Replay startup until a foreground window is available (#7928)
+- Fix race conditions in scope observer iteration and propagation context locking (#7897)
+- Support stack traces for standalone clients (#7817)
+- Prevent SessionTracker crash with profiling (#7927)
+  - Reevaluation of sampling decision is only done for new sessions.
+- Call SentrySessionListener on main thread (#7917)
+
+## 9.13.0
+
+### Fixes
+
+- Fix crash with AVAssetDownloadTask in urlSessionTask:setState: (#7891)
+- Prevent crash-loop from malformed recrash reports (#7892)
+
+### Features
+
+- Prevent memory strings in stack overflow crash reports (#7841)
+- Add Set conformance to SentryAttributeValue (#7876)
+
+## 9.12.1
+
+> [!WARNING]
+> ⚠️ **Known Issue:** Sentry Cocoa **9.12.0+** crashes apps using `AVAssetDownloadURLSession` ([#7886](https://github.com/getsentry/sentry-cocoa/issues/7886)). Fixed in [**9.13.0**](https://github.com/getsentry/sentry-cocoa/releases/tag/9.13.0).
+
+### Fixes
+
+- Prevent memory strings in stack overflow crash reports (#7841)
+- Report crashed thread for null function calls (#7866)
+- Add depth limits to data sanitization and JSON encoder (#7857)
+- Moved `BinaryImageCache` initialization to a background thread to reduce blocking on dyld reader locks on the main thread (#7823)
+- Init vars before `task_threads` and `vm_deallocate` (#7858)
+- Handle extra length call in `SentryInvalidJSONString` (#7859)
+
+## 9.12.0
+
+> [!WARNING]
+> ⚠️ **Known Issue:** Sentry Cocoa **9.12.0+** crashes apps using `AVAssetDownloadURLSession` ([#7886](https://github.com/getsentry/sentry-cocoa/issues/7886)). Fixed in [**9.13.0**](https://github.com/getsentry/sentry-cocoa/releases/tag/9.13.0).
+
 > [!WARNING]
 > This release promotes Metrics out of experimental and **removes** `options.experimental.enableMetrics` and `options.experimental.beforeSendMetric`. If you set either of these, your app will fail to compile after upgrading.
 > Migrate to `options.enableMetrics` and `options.beforeSendMetric` (top-level on `Options`) — the defaults and behavior are unchanged.
@@ -45,9 +257,12 @@
 ### Features
 
 - Make feature Metrics generally available, moving experimental options to top-level options (#7843)
+- Add Session Replay network details capture, including request/response headers and bodies extraction (#7580, #7582, #7584, #7585, #7588, #7590, #7854)
+  - Find more details [here](https://docs.sentry.dev/platforms/apple/guides/ios/session-replay/configuration/).
 
 ### Fixes
 
+- Fix infinite loop in `sentrycrashfu_readBytesFromFD` when `read()` returns EOF on a truncated file (#7853)
 - Disable app hang and watchdog termination tracking in Notification Service Extensions (#7818)
 - Fix JSON encoding of infinite numeric values in crash reports (#7802)
 - Fix race condition in `SentryFramesTracker` listeners causing `EXC_BAD_ACCESS` in `NSConcreteHashTable removeItem:` when a listener is deallocated on a background thread (#7839)

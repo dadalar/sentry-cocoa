@@ -11,23 +11,27 @@ class SentrySessionReplayIntegrationTests: XCTestCase {
     private var globalEventProcessor: SentryGlobalEventProcessor!
     private var dateProvider: TestCurrentDateProvider!
 
-    private class TestCrashWrapper: SentryCrashWrapper {
+    private class TestCrashWrapper: NSObject, SentryCrashReporter {
         let traced: Bool
 
         init(traced: Bool = true) {
             self.traced = traced
-            let container = SentryDependencyContainer.sharedInstance()
-            let bridge = SentryCrashBridge(
-                notificationCenterWrapper: container.notificationCenterWrapper,
-                dateProvider: container.dateProvider,
-                crashReporter: container.crashReporter
-            )
-            super.init(processInfoWrapper: ProcessInfo.processInfo, systemInfo: [:], bridge: bridge)
+            super.init()
         }
-        
-        override public var isBeingTraced: Bool {
-            traced
-        }
+
+        var crashedLastLaunch: Bool { false }
+        var durationFromCrashStateInitToLastCrash: TimeInterval { 0 }
+        var activeDurationSinceLastCrash: TimeInterval { 0 }
+        var isBeingTraced: Bool { traced }
+        var isSimulatorBuild: Bool { false }
+        var isApplicationInForeground: Bool { true }
+        var freeMemorySize: UInt64 { 0 }
+        var appMemorySize: UInt64 { 0 }
+        var systemInfo: [String: Any] { [:] }
+        var processInfoWrapper: SentryProcessInfoSource { ProcessInfo.processInfo }
+        func startBinaryImageCache() {}
+        func stopBinaryImageCache() {}
+        func enrichScope(_ scope: Scope) {}
     }
     
     override func setUpWithError() throws {
@@ -111,6 +115,21 @@ class SentrySessionReplayIntegrationTests: XCTestCase {
         let sut = try getSut()
         XCTAssertNil(sut.sessionReplay)
     }
+
+    func testApplicationDidBecomeActive_whenStartIsNotPending_shouldNotStartReplay() throws {
+        // -- Arrange --
+        SentryDependencyContainer.sharedInstance().random = TestRandom(value: 0.3)
+        startSDK(sessionSampleRate: 0.2, errorSampleRate: 0)
+
+        let sut = try getSut()
+        XCTAssertNil(sut.sessionReplay)
+
+        // -- Act --
+        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+
+        // -- Assert --
+        XCTAssertNil(sut.sessionReplay)
+    }
     
     func testInstallFullSessionReplayBecauseOfRandom() throws {
         SentryDependencyContainer.sharedInstance().random = TestRandom(value: 0.1)
@@ -138,6 +157,44 @@ class SentrySessionReplayIntegrationTests: XCTestCase {
         XCTAssertNil(sut.sessionReplay)
         uiApplication.windows = [UIWindow()]
         NotificationCenter.default.post(name: UIScene.didActivateNotification, object: nil)
+        XCTAssertNotNil(sut.sessionReplay)
+    }
+
+    func testRunReplayForAvailableWindow_whenPendingStartAndSessionEnds_shouldNotStartAfterLifecycleNotification() throws {
+        // -- Arrange --
+        uiApplication.windows = nil
+        startSDK(sessionSampleRate: 1, errorSampleRate: 0)
+
+        let sut = try getSut()
+        XCTAssertNil(sut.sessionReplay)
+
+        // -- Act --
+        SentrySDKInternal.currentHub().endSession()
+        uiApplication.windows = [UIWindow()]
+        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.post(name: UIScene.didActivateNotification, object: nil)
+
+        // -- Assert --
+        XCTAssertNil(sut.sessionReplay)
+    }
+
+    func testApplicationDidBecomeActive_whenSessionRestartWasDelayed_shouldStartReplay() throws {
+        // -- Arrange --
+        startSDK(sessionSampleRate: 1, errorSampleRate: 0)
+
+        let sut = try getSut()
+        XCTAssertNotNil(sut.sessionReplay)
+        SentrySDKInternal.currentHub().endSession()
+        XCTAssertNil(sut.sessionReplay)
+        uiApplication.windows = nil
+        SentrySDKInternal.currentHub().startSession()
+        XCTAssertNil(sut.sessionReplay)
+
+        // -- Act --
+        uiApplication.windows = [UIWindow()]
+        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+
+        // -- Assert --
         XCTAssertNotNil(sut.sessionReplay)
     }
     

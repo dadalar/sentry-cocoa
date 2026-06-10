@@ -15,9 +15,9 @@
 #import "SentryMessage.h"
 #import "SentryMeta.h"
 #import "SentryMsgPackSerializer.h"
-#import "SentryNSDictionarySanitize.h"
 #import "SentryNSError.h"
 #import "SentrySDK+Private.h"
+#import "SentrySanitizerUtils.h"
 #import "SentryScope+Private.h"
 #import "SentryScope+PrivateSwift.h"
 #import "SentrySerialization.h"
@@ -59,23 +59,25 @@ NSString *const DropSessionLogMessage = @"Session has no release name. Won't sen
 
 - (_Nullable instancetype)initWithOptions:(SentryOptions *)options
 {
+    SentryDependencyContainer *dependencies = SentryDependencyContainer.sharedInstance;
+
     NSError *error;
-    SentryFileManager *fileManager = [[SentryFileManager alloc]
-             initWithOptions:options
-                dateProvider:SentryDependencyContainer.sharedInstance.dateProvider
-        dispatchQueueWrapper:SentryDependencyContainer.sharedInstance.dispatchQueueWrapper
-                       error:&error];
+    SentryFileManager *fileManager =
+        [[SentryFileManager alloc] initWithOptions:options
+                                      dateProvider:dependencies.dateProvider
+                              dispatchQueueWrapper:dependencies.dispatchQueueWrapper
+                                             error:&error];
     if (error != nil) {
         SENTRY_LOG_FATAL(@"Failed to initialize file system: %@", error.localizedDescription);
         return nil;
     }
 
-    NSArray<id<SentryTransport>> *transports = [SentryTransportFactory
-           initTransports:options
-             dateProvider:SentryDependencyContainer.sharedInstance.dateProvider
-        sentryFileManager:fileManager
-               rateLimits:SentryDependencyContainer.sharedInstance.rateLimits
-             reachability:SentryDependencyContainer.sharedInstance.reachability];
+    NSArray<id<SentryTransport>> *transports =
+        [SentryTransportFactory initTransports:options
+                                  dateProvider:dependencies.dateProvider
+                             sentryFileManager:fileManager
+                                    rateLimits:dependencies.rateLimits
+                                  reachability:dependencies.reachability];
 
     SentryTransportAdapter *transportAdapter =
         [[SentryTransportAdapter alloc] initWithTransports:transports options:options];
@@ -83,19 +85,18 @@ NSString *const DropSessionLogMessage = @"Session has no release name. Won't sen
     SentryDefaultThreadInspector *threadInspector =
         [[SentryDefaultThreadInspector alloc] initWithOptions:options];
 
-    id<SentryEventContextEnricher> eventContextEnricher
-        = SentryDependencyContainer.sharedInstance.eventContextEnricher;
-
     return [self initWithOptions:options
-                    dateProvider:SentryDependencyContainer.sharedInstance.dateProvider
+                    dateProvider:dependencies.dateProvider
                 transportAdapter:transportAdapter
                      fileManager:fileManager
                  threadInspector:threadInspector
-              debugImageProvider:[SentryDependencyContainer sharedInstance].debugImageProvider
-                          random:[SentryDependencyContainer sharedInstance].random
+              debugImageProvider:dependencies.debugImageProvider
+                          random:dependencies.random
                           locale:[NSLocale autoupdatingCurrentLocale]
                         timezone:[NSCalendar autoupdatingCurrentCalendar].timeZone
-            eventContextEnricher:eventContextEnricher];
+            eventContextEnricher:dependencies.eventContextEnricher
+                    crashWrapper:dependencies.crashWrapper
+                binaryImageCache:dependencies.binaryImageCache];
 }
 
 - (instancetype)initWithOptions:(SentryOptions *)options
@@ -108,6 +109,8 @@ NSString *const DropSessionLogMessage = @"Session has no release name. Won't sen
                          locale:(NSLocale *)locale
                        timezone:(NSTimeZone *)timezone
            eventContextEnricher:(id<SentryEventContextEnricher>)eventContextEnricher
+                   crashWrapper:(id<SentryCrashReporter>)crashWrapper
+               binaryImageCache:(SentryBinaryImageCache *)binaryImageCache
 {
     if (self = [super init]) {
         _isEnabled = YES;
@@ -132,6 +135,9 @@ NSString *const DropSessionLogMessage = @"Session has no release name. Won't sen
                                                           releaseName:options.releaseName
                                                    cacheDirectoryPath:options.cacheDirectoryPath
                                                        sendDefaultPii:options.sendDefaultPii];
+
+        [crashWrapper startBinaryImageCache];
+        [binaryImageCache start:options.debug];
 
         // The SDK stores the installationID in a file. The first call requires file IO. To avoid
         // executing this on the main thread, we cache the installationID async here.
@@ -266,7 +272,7 @@ NSString *const DropSessionLogMessage = @"Session has no release name. Won't sen
 
     // Once the UI displays the mechanism data we can the userInfo from the event.context using only
     // the root error's userInfo.
-    [self setUserInfo:sentry_sanitize(error.userInfo) withEvent:event];
+    [self setUserInfo:sentry_sanitize_dictionary(error.userInfo) withEvent:event];
 
     return event;
 }
@@ -308,7 +314,7 @@ NSString *const DropSessionLogMessage = @"Session has no release name. Won't sen
     // use a simple enum.
     mechanism.desc = error.description;
 
-    NSDictionary<NSString *, id> *userInfo = sentry_sanitize(error.userInfo);
+    NSDictionary<NSString *, id> *userInfo = sentry_sanitize_dictionary(error.userInfo);
     mechanism.data = userInfo;
     exception.mechanism = mechanism;
 
@@ -952,7 +958,7 @@ NSString *const DropSessionLogMessage = @"Session has no release name. Won't sen
             context = [event.context mutableCopy];
         }
 
-        [context setValue:sentry_sanitize(userInfo) forKey:@"user info"];
+        [context setValue:sentry_sanitize_dictionary(userInfo) forKey:@"user info"];
     }
 }
 

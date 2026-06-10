@@ -95,6 +95,14 @@ update-versions:
 check-versions:
 	./scripts/check-tooling-versions.sh
 
+## Check SentryCrash imports
+#
+# CI ratchet that ensures the number of direct SentryCrash header imports
+# from SDK source files does not increase beyond the established baseline.
+.PHONY: check-sentrycrash-imports
+check-sentrycrash-imports:
+	@./scripts/check-sentrycrash-imports.sh
+
 # ============================================================================
 # BUILDING
 # ============================================================================
@@ -219,6 +227,36 @@ build-signed-xcframework:
 build-xcframework-sample:
 	xcodebuild -project "Samples/XCFramework-Validation/XCFramework.xcodeproj" -configuration Release CODE_SIGNING_ALLOWED="NO" build
 
+## Build SentryObjC-Static XCFramework locally for one or more SDKs
+#
+# Builds SentryObjC as a static xcframework via SPM archive + libtool.
+# Output lands in SentryObjC-Static.xcframework.
+#
+# SDKS is a comma-separated list of SDK names. Defaults to all SDKS.
+#
+# Examples:
+#   make build-xcframework-sentryobjc-static SDKS=iphonesimulator
+#   make build-xcframework-sentryobjc-static SDKS=iphoneos,iphonesimulator
+.PHONY: build-xcframework-sentryobjc-static
+build-xcframework-sentryobjc-static:
+	@echo "--> Creating SentryObjC-Static xcframework (SDKs: $(SDKS))"
+	./scripts/build-xcframework-sentryobjc.sh --sdks "$(SDKS)"
+
+## Build SentryObjC-Dynamic XCFramework locally for one or more SDKs
+#
+# Builds SentryObjC as a dynamic xcframework via SPM archive + swiftc relink.
+# Output lands in SentryObjC-Dynamic.xcframework.
+#
+# SDKS is a comma-separated list of SDK names. Defaults to all SDKS.
+#
+# Examples:
+#   make build-xcframework-sentryobjc-dynamic SDKS=iphonesimulator
+#   make build-xcframework-sentryobjc-dynamic SDKS=iphoneos,iphonesimulator
+.PHONY: build-xcframework-sentryobjc-dynamic
+build-xcframework-sentryobjc-dynamic:
+	@echo "--> Creating SentryObjC-Dynamic xcframework (SDKs: $(SDKS))"
+	./scripts/build-xcframework-sentryobjc.sh --sdks "$(SDKS)" --variant dynamic
+
 # ============================================================================
 # SAMPLE APPS
 # ============================================================================
@@ -230,6 +268,9 @@ build-xcframework-sample:
 build-samples: \
 	build-sample-DistributionSample \
 	build-sample-iOS-ObjectiveC \
+	build-sample-iOS-ObjectiveC-Dynamic \
+	build-sample-iOS-ObjectiveC-Static \
+	build-sample-iOS-ObjectiveCpp-NoModules \
 	build-sample-iOS-Swift \
 	build-sample-iOS-Swift6 \
 	build-sample-iOS-SwiftUI \
@@ -324,9 +365,8 @@ build-sample-visionOS-SwiftUI-SPM:
 
 ## Build the iOS-ObjectiveCpp-NoModules sample app
 #
-# Builds the ObjC++ without-modules sample that reproduces #4543.
-# This target is expected to FAIL until the pure ObjC SDK wrapper (#6342)
-# is implemented. Use it to verify the fix.
+# Builds the ObjC++ without-modules sample that uses SentryObjC (#6342).
+# Uses #import <SentryObjC/SentryObjC.h> for ObjC++ without -fmodules.
 .PHONY: build-sample-iOS-ObjectiveCpp-NoModules
 build-sample-iOS-ObjectiveCpp-NoModules:
 	xcodegen --spec Samples/iOS-ObjectiveCpp-NoModules/iOS-ObjectiveCpp-NoModules.yml
@@ -399,6 +439,32 @@ build-sample-iOS-ObjectiveC:
 	set -o pipefail && xcodebuild \
 		-workspace Sentry.xcworkspace \
 		-scheme iOS-ObjectiveC \
+		-destination 'platform=iOS Simulator,OS=$(IOS_SIMULATOR_OS),name=$(IOS_DEVICE_NAME)' \
+		CODE_SIGNING_ALLOWED="NO" build | xcbeautify --preserve-unbeautified
+
+## Build the iOS-ObjectiveC-Dynamic sample app
+#
+# Builds the iOS-ObjectiveC-Dynamic sample app for the iOS Simulator.
+# This sample uses the pre-built SentryObjC-Dynamic xcframework via SPM.
+.PHONY: build-sample-iOS-ObjectiveC-Dynamic
+build-sample-iOS-ObjectiveC-Dynamic:
+	xcodegen --spec Samples/iOS-ObjectiveC-Dynamic/iOS-ObjectiveC-Dynamic.yml
+	set -o pipefail && xcodebuild \
+		-project "Samples/iOS-ObjectiveC-Dynamic/iOS-ObjectiveC-Dynamic.xcodeproj" \
+		-scheme iOS-ObjectiveC-Dynamic \
+		-destination 'platform=iOS Simulator,OS=$(IOS_SIMULATOR_OS),name=$(IOS_DEVICE_NAME)' \
+		CODE_SIGNING_ALLOWED="NO" build | xcbeautify --preserve-unbeautified
+
+## Build the iOS-ObjectiveC-Static sample app
+#
+# Builds the iOS-ObjectiveC-Static sample app for the iOS Simulator.
+# This sample uses the pre-built SentryObjC-Static xcframework via SPM.
+.PHONY: build-sample-iOS-ObjectiveC-Static
+build-sample-iOS-ObjectiveC-Static:
+	xcodegen --spec Samples/iOS-ObjectiveC-Static/iOS-ObjectiveC-Static.yml
+	set -o pipefail && xcodebuild \
+		-project "Samples/iOS-ObjectiveC-Static/iOS-ObjectiveC-Static.xcodeproj" \
+		-scheme iOS-ObjectiveC-Static \
 		-destination 'platform=iOS Simulator,OS=$(IOS_SIMULATOR_OS),name=$(IOS_DEVICE_NAME)' \
 		CODE_SIGNING_ALLOWED="NO" build | xcbeautify --preserve-unbeautified
 
@@ -542,12 +608,14 @@ test: test-ios test-macos test-catalyst test-tvos test-visionos
 # Runs unit tests for iOS Simulator.
 # Outputs logs and uses xcbeautify for formatted output.
 #
-# Optional: ONLY_TESTING=ClassName to run specific test class(es)
+# Optional: ONLY_TESTING=Target/ClassName to run specific test class(es)
+# Optional: TEST_SCHEME=SchemeName to override the default Xcode scheme (default: Sentry)
 # Examples:
 #   make test-ios
-#   make test-ios ONLY_TESTING=SentryHttpTransportTests
-#   make test-ios ONLY_TESTING=SentryHttpTransportTests,SentryHubTests
-#   make test-ios ONLY_TESTING=SentryHttpTransportTests/testFlush_WhenNoInternet
+#   make test-ios ONLY_TESTING=SentryTests/SentryHttpTransportTests
+#   make test-ios ONLY_TESTING=SentryTests/SentryHttpTransportTests,SentryTests/SentryHubTests
+#   make test-ios ONLY_TESTING=SentryTests/SentryHttpTransportTests/testFlush_WhenNoInternet
+#   make test-ios TEST_SCHEME=SentryObjCTests
 .PHONY: test-ios
 test-ios:
 	@echo "--> Running iOS tests"
@@ -558,6 +626,7 @@ test-ios:
 		--ref $(GIT-REF) \
 		--command test \
 		--configuration Test \
+		$(if $(TEST_SCHEME),--scheme "$(TEST_SCHEME)") \
 		--only-testing "$(ONLY_TESTING)"
 
 ## Run macOS tests
@@ -565,10 +634,12 @@ test-ios:
 # Runs unit tests for macOS.
 # Outputs logs and uses xcbeautify for formatted output.
 #
-# Optional: ONLY_TESTING=ClassName to run specific test class(es)
+# Optional: ONLY_TESTING=Target/ClassName to run specific test class(es)
+# Optional: TEST_SCHEME=SchemeName to override the default Xcode scheme (default: Sentry)
 # Examples:
 #   make test-macos
-#   make test-macos ONLY_TESTING=SentryHttpTransportTests
+#   make test-macos ONLY_TESTING=SentryTests/SentryHttpTransportTests
+#   make test-macos TEST_SCHEME=SentryObjCTests
 .PHONY: test-macos
 test-macos:
 	@echo "--> Running macOS tests"
@@ -578,6 +649,7 @@ test-macos:
 		--ref $(GIT-REF) \
 		--command test \
 		--configuration Test \
+		$(if $(TEST_SCHEME),--scheme "$(TEST_SCHEME)") \
 		--only-testing "$(ONLY_TESTING)"
 
 ## Run Catalyst tests
@@ -585,10 +657,11 @@ test-macos:
 # Runs unit tests for Mac Catalyst.
 # Outputs logs and uses xcbeautify for formatted output.
 #
-# Optional: ONLY_TESTING=ClassName to run specific test class(es)
+# Optional: ONLY_TESTING=Target/ClassName to run specific test class(es)
+# Optional: TEST_SCHEME=SchemeName to override the default Xcode scheme (default: Sentry)
 # Examples:
 #   make test-catalyst
-#   make test-catalyst ONLY_TESTING=SentryHttpTransportTests
+#   make test-catalyst ONLY_TESTING=SentryTests/SentryHttpTransportTests
 .PHONY: test-catalyst
 test-catalyst:
 	@echo "--> Running Catalyst tests"
@@ -598,6 +671,7 @@ test-catalyst:
 		--ref $(GIT-REF) \
 		--command test \
 		--configuration Test \
+		$(if $(TEST_SCHEME),--scheme "$(TEST_SCHEME)") \
 		--only-testing "$(ONLY_TESTING)"
 
 ## Run tvOS tests
@@ -605,10 +679,11 @@ test-catalyst:
 # Runs unit tests for tvOS Simulator.
 # Outputs logs and uses xcbeautify for formatted output.
 #
-# Optional: ONLY_TESTING=ClassName to run specific test class(es)
+# Optional: ONLY_TESTING=Target/ClassName to run specific test class(es)
+# Optional: TEST_SCHEME=SchemeName to override the default Xcode scheme (default: Sentry)
 # Examples:
 #   make test-tvos
-#   make test-tvos ONLY_TESTING=SentryHttpTransportTests
+#   make test-tvos ONLY_TESTING=SentryTests/SentryHttpTransportTests
 .PHONY: test-tvos
 test-tvos:
 	@echo "--> Running tvOS tests"
@@ -619,6 +694,7 @@ test-tvos:
 		--ref $(GIT-REF) \
 		--command test \
 		--configuration Test \
+		$(if $(TEST_SCHEME),--scheme "$(TEST_SCHEME)") \
 		--only-testing "$(ONLY_TESTING)"
 
 ## Run visionOS tests
@@ -626,10 +702,11 @@ test-tvos:
 # Runs unit tests for visionOS Simulator.
 # Outputs logs and uses xcbeautify for formatted output.
 #
-# Optional: ONLY_TESTING=ClassName to run specific test class(es)
+# Optional: ONLY_TESTING=Target/ClassName to run specific test class(es)
+# Optional: TEST_SCHEME=SchemeName to override the default Xcode scheme (default: Sentry)
 # Examples:
 #   make test-visionos
-#   make test-visionos ONLY_TESTING=SentryHttpTransportTests
+#   make test-visionos ONLY_TESTING=SentryTests/SentryHttpTransportTests
 .PHONY: test-visionos
 test-visionos:
 	@echo "--> Running visionOS tests"
@@ -640,6 +717,7 @@ test-visionos:
 		--ref $(GIT-REF) \
 		--command test \
 		--configuration Test \
+		$(if $(TEST_SCHEME),--scheme "$(TEST_SCHEME)") \
 		--only-testing "$(ONLY_TESTING)"
 
 # Note: test-watchos target is not available because watchOS does not support XCTest.
@@ -917,50 +995,6 @@ generate-public-api:
 strip-xcframework-expected-signature:
 	sed -i '' 's/expectedSignature = "[^"]*"; //g' Samples/XCFramework-Validation/XCFramework.xcodeproj/project.pbxproj
 
-## Bump version to specified version
-#
-# Updates the version across all project files.
-# Usage: make bump-version TO=5.0.0-rc.0
-.PHONY: bump-version
-bump-version: clean-version-bump
-	@echo "--> Bumping version to ${TO}"
-	./Utils/VersionBump/.build/debug/VersionBump --update ${TO}
-
-## Verify version matches specified version
-#
-# Verifies that the version matches the specified version across all project files.
-# Usage: make verify-version TO=5.0.0-rc.0
-.PHONY: verify-version
-verify-version: clean-version-bump
-	@echo "--> Verifying version ${TO}"
-	./Utils/VersionBump/.build/debug/VersionBump --verify ${TO}
-
-## Clean and build VersionBump tool
-#
-# Cleans and rebuilds the VersionBump utility tool.
-.PHONY: clean-version-bump
-clean-version-bump:
-	@echo "--> Clean VersionBump"
-	cd Utils/VersionBump && rm -rf .build && swift build
-
-## Release new version
-#
-# Bumps version, commits changes, creates tag, and pushes to remote.
-# Usage: make release TO=5.0.0-rc.0
-.PHONY: release
-release: bump-version git-commit-add
-
-## Commit version changes and create tag
-#
-# Commits version changes, creates git tag, and pushes to remote.
-# Usage: make git-commit-add TO=5.0.0-rc.0
-.PHONY: git-commit-add
-git-commit-add:
-	@echo "\n\n\n--> Committing git ${TO}"
-	git commit -am "release: ${TO}"
-	git tag ${TO}
-	git push
-	git push --tags
 
 # ============================================================================
 # VALIDATION
@@ -994,6 +1028,8 @@ xcode-ci: xcode-ci-SentrySampleShared \
 	xcode-ci-SPM \
 	xcode-ci-SessionReplay-CameraTest \
 	xcode-ci-iOS-ObjectiveC \
+	xcode-ci-iOS-ObjectiveC-Dynamic \
+	xcode-ci-iOS-ObjectiveC-Static \
 	xcode-ci-iOS-ObjectiveCpp-NoModules \
 	xcode-ci-iOS-Swift \
 	xcode-ci-iOS-Swift6 \
@@ -1029,6 +1065,14 @@ xcode-ci-SessionReplay-CameraTest: xcode-ci-SentrySampleShared
 .PHONY: xcode-ci-iOS-ObjectiveC
 xcode-ci-iOS-ObjectiveC: xcode-ci-SentrySampleShared
 	xcodegen --spec Samples/iOS-ObjectiveC/iOS-ObjectiveC.yml
+
+.PHONY: xcode-ci-iOS-ObjectiveC-Dynamic
+xcode-ci-iOS-ObjectiveC-Dynamic:
+	xcodegen --spec Samples/iOS-ObjectiveC-Dynamic/iOS-ObjectiveC-Dynamic.yml
+
+.PHONY: xcode-ci-iOS-ObjectiveC-Static
+xcode-ci-iOS-ObjectiveC-Static:
+	xcodegen --spec Samples/iOS-ObjectiveC-Static/iOS-ObjectiveC-Static.yml
 
 .PHONY: xcode-ci-iOS-ObjectiveCpp-NoModules
 xcode-ci-iOS-ObjectiveCpp-NoModules:
@@ -1202,7 +1246,7 @@ help:
 		echo "📖 Or: make help name=<command>      (e.g., make help name=build-ios)"; \
 		echo ""; \
 	fi
- 
+
 .PHONY: help-% help-target
 help-%:
 	@target="$*"; \

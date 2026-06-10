@@ -16,6 +16,22 @@ public final class SentryExperimentalOptions: NSObject {
     /// When enabled, the SDK uses a more efficient mechanism for detecting watchdog terminations.
     public var enableWatchdogTerminationsV2 = false
 
+    /**
+     * Enables network detail capture for Session Replay.
+     *
+     * When enabled, the SDK can capture request and response headers and bodies for network
+     * requests during session replay. You must also configure
+     * `options.sessionReplay.networkDetailAllowUrls` with URL patterns to specify which
+     * requests should be captured.
+     */
+    public var enableReplayNetworkDetailsCapturing = false
+
+    /**
+     * When enabled, the SDK sends a standalone app start transaction instead of attaching app
+     * start data to the first UIViewController transaction.
+     */
+    public var enableStandaloneAppStartTracing = false
+
     // swiftlint:disable:next missing_docs
     @_spi(Private) public func validateOptions(_ options: [String: Any]?) {
     }

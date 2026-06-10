@@ -65,10 +65,13 @@ jobs:
         sdk: ${{ fromJson(inputs.sdk-list) }}
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      # We use Xcode 16.4 for building XCFrameworks as it's the standard version available on macos-15 runners.
-      - run: ./scripts/ci-select-xcode.sh 16.4
-        shell: bash
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      # We use Xcode 16 (latest installed minor) for building XCFrameworks. The setup-xcode action
+      # picks the newest 16.x available on the macos-15 runner image.
+      - name: Setup Xcode
+        uses: ./.github/actions/setup-xcode
+        with:
+          version: "16"
 
       - name: Get version
         id: get-version
@@ -86,9 +89,7 @@ jobs:
       - name: Bump version
         env:
           VERSION: ${{ env.VERSION }}
-        run: |
-          ./scripts/ci-select-xcode.sh 16.4
-          make bump-version TO=$VERSION
+        run: ./scripts/bump-version.sh --version "$VERSION"
 
       - name: Build ${{inputs.name}}${{inputs.suffix}} XCFramework slice for ${{matrix.sdk}}
         env:
@@ -100,8 +101,11 @@ jobs:
         run: ./scripts/build-xcframework-slice.sh "$MATRIX_SDK" "$INPUT_NAME" "$INPUT_SUFFIX" "$INPUT_MACHO_TYPE" "$INPUT_CONFIG_SUFFIX"
         shell: bash
 
-      # The SentrySwiftUI archive build also builds Sentry.framework as a byproduct of the dependency. We need to remove that to avoid downstream assembly tasks from tripping on these extra files. In the future we could investigate using this byproduct instead of running a separate task for Sentry.framework, or use the one already built by that other task instead of rebuilding it here.
-      - name: Remove Sentry.framework from SentrySwiftUI build
+      # SentrySwiftUI depends on Sentry, which gets built as a byproduct.
+      # Remove it — consumers link Sentry separately.
+      # SentryObjC is NOT included here: it embeds its dependencies inside
+      # the framework bundle and needs them to stay.
+      - name: Remove Sentry.framework byproduct
         if: inputs.name == 'SentrySwiftUI'
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}

@@ -2,20 +2,37 @@
 
 set -euo pipefail
 
-usage() {
-  cat <<'USAGE'
-Usage: prepare-package.sh [options]
+# Disable SC1091 because it won't work with pre-commit
+# shellcheck source=./scripts/ci-utils.sh disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/ci-utils.sh"
 
-Options:
-  --package-file PATH        Path to a single Package.swift file (default: none; all package files are updated)
-  --is-pr true|false         Whether this run simulates a pull request (default: false)
-  --remove-duplicate true|false
-                             Whether to strip duplicate targets (default: false)
-  --change-path true|false   Whether to swap SPM binary URLs for local paths (default: false)
-  --remove-binary-targets true|false
-                             Whether to keep only SentryDistribution product/target (default: false)
-  -h, --help                 Show this help message
-USAGE
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [options]
+
+Prepare Package.swift files for CI builds by stripping or rewriting
+targets, paths, and binary definitions.
+
+OPTIONS:
+    --package-file PATH              Single Package.swift file (default: all discovered)
+    --is-pr true|false               Strip arm64e targets for PR builds (default: false)
+    --remove-duplicate true|false    Strip duplicate variant targets (default: false)
+    --change-path true|false         Swap binary URLs for local paths (default: false)
+    --remove-binary-targets true|false
+                                     Remove binary targets and keep source-backed products (default: false)
+    --strip-binary-targets true|false
+                                     Remove only .binaryTarget blocks and their product entries,
+                                     keeping all source-backed targets intact (default: false)
+    -h, --help                       Show this help message
+
+EXAMPLES:
+    $(basename "$0") --is-pr true
+    $(basename "$0") --package-file Package.swift --change-path true
+    $(basename "$0") --remove-binary-targets true
+    $(basename "$0") --strip-binary-targets true
+
+EOF
+    exit 1
 }
 
 is_enabled() {
@@ -44,42 +61,46 @@ IS_PR="false"
 REMOVE_DUPLICATE="false"
 CHANGE_PATH="false"
 REMOVE_BINARY_TARGETS="false"
+STRIP_BINARY_TARGETS="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --package-file)
-      [[ $# -lt 2 ]] && { echo "Missing value for $1" >&2; exit 1; }
+      [[ $# -lt 2 ]] && { log_error "Missing value for $1"; exit 1; }
       PACKAGE_FILES=("$2")
       shift 2
       ;;
     --is-pr)
-      [[ $# -lt 2 ]] && { echo "Missing value for $1" >&2; exit 1; }
+      [[ $# -lt 2 ]] && { log_error "Missing value for $1"; exit 1; }
       IS_PR="$2"
       shift 2
       ;;
     --remove-duplicate)
-      [[ $# -lt 2 ]] && { echo "Missing value for $1" >&2; exit 1; }
+      [[ $# -lt 2 ]] && { log_error "Missing value for $1"; exit 1; }
       REMOVE_DUPLICATE="$2"
       shift 2
       ;;
     --change-path)
-      [[ $# -lt 2 ]] && { echo "Missing value for $1" >&2; exit 1; }
+      [[ $# -lt 2 ]] && { log_error "Missing value for $1"; exit 1; }
       CHANGE_PATH="$2"
       shift 2
       ;;
     --remove-binary-targets)
-      [[ $# -lt 2 ]] && { echo "Missing value for $1" >&2; exit 1; }
+      [[ $# -lt 2 ]] && { log_error "Missing value for $1"; exit 1; }
       REMOVE_BINARY_TARGETS="$2"
+      shift 2
+      ;;
+    --strip-binary-targets)
+      [[ $# -lt 2 ]] && { log_error "Missing value for $1"; exit 1; }
+      STRIP_BINARY_TARGETS="$2"
       shift 2
       ;;
     -h|--help)
       usage
-      exit 0
       ;;
     *)
-      echo "Unknown option: $1" >&2
-      usage >&2
-      exit 1
+      log_error "Unknown option: $1"
+      usage
       ;;
   esac
 done
@@ -94,10 +115,18 @@ fi
 
 for PACKAGE_FILE in "${PACKAGE_FILES[@]}"; do
   if [[ ! -f "$PACKAGE_FILE" ]]; then
-    echo "Package file not found: $PACKAGE_FILE" >&2
+    log_error "Package file not found: $PACKAGE_FILE"
     exit 1
   fi
 done
+
+log_info "Preparing package files:"
+log_info "  Files:                ${PACKAGE_FILES[*]}"
+log_info "  Is PR:                $IS_PR"
+log_info "  Remove duplicate:     $REMOVE_DUPLICATE"
+log_info "  Change path:          $CHANGE_PATH"
+log_info "  Remove binary targets: $REMOVE_BINARY_TARGETS"
+log_info "  Strip binary targets:  $STRIP_BINARY_TARGETS"
 
 for PACKAGE_FILE in "${PACKAGE_FILES[@]}"; do
   if is_enabled "$IS_PR"; then
@@ -121,10 +150,12 @@ for PACKAGE_FILE in "${PACKAGE_FILES[@]}"; do
     sed -i '' 's/checksum: ".*" \/\/Sentry-Dynamic/path: "Sentry-Dynamic.xcframework.zip"/g' "$PACKAGE_FILE"
     sed -i '' 's/checksum: ".*" \/\/Sentry-WithoutUIKitOrAppKit-WithARM64e/path: "Sentry-WithoutUIKitOrAppKit-WithARM64e.xcframework.zip"/g' "$PACKAGE_FILE"
     sed -i '' 's/checksum: ".*" \/\/Sentry-WithoutUIKitOrAppKit/path: "Sentry-WithoutUIKitOrAppKit.xcframework.zip"/g' "$PACKAGE_FILE"
+    sed -i '' 's/checksum: ".*" \/\/SentryObjC-Dynamic/path: "SentryObjC-Dynamic.xcframework.zip"/g' "$PACKAGE_FILE"
+    sed -i '' 's/checksum: ".*" \/\/SentryObjC-Static/path: "SentryObjC-Static.xcframework.zip"/g' "$PACKAGE_FILE"
 
     # Clean up orphaned commas and fix syntax.
     sed -i '' '/^[[:space:]]*,$/d' "$PACKAGE_FILE"
-    sed -i '' 's/name: "Sentry\(-.*\)\?"$/name: "Sentry\1",/g' "$PACKAGE_FILE"
+    sed -i '' 's/name: "Sentry[^"]*"$/&,/g' "$PACKAGE_FILE"
     sed -i '' 's/platforms: \[\.iOS(\.v11), \.macOS(\.v10_13), \.tvOS(\.v11), \.watchOS(\.v4)\]$/platforms: [.iOS(.v11), .macOS(.v10_13), .tvOS(.v11), .watchOS(.v4)],/g' "$PACKAGE_FILE"
   fi
 
@@ -132,7 +163,8 @@ for PACKAGE_FILE in "${PACKAGE_FILES[@]}"; do
     # Remove all binary targets.
     sed -i '' '/^[[:space:]]*\.binaryTarget(/,/^[[:space:]]*),\{0,1\}$/d' "$PACKAGE_FILE"
 
-    # Keep only the SentryDistribution library in the products array.
+    # Keep only source-backed products in the products array. Additional source products can be
+    # appended later in the file, such as SentrySPM and SentryObjC.
     sed -i '' '/^var products: \[Product\] = \[/,/^]/c\
 var products: [Product] = [\
     .library(name: "SentryDistribution", targets: ["SentryDistribution"]),\
@@ -153,9 +185,12 @@ var targets: [Target] = [\
 ' "$PACKAGE_FILE"
   fi
 
-  echo
-  echo "===== $PACKAGE_FILE (after prepare-package.sh) ====="
+  if is_enabled "$STRIP_BINARY_TARGETS"; then
+    sed -i '' '/BEGIN:BINARY_PRODUCTS/,/END:BINARY_PRODUCTS/d' "$PACKAGE_FILE"
+    sed -i '' '/BEGIN:BINARY_TARGETS/,/END:BINARY_TARGETS/d' "$PACKAGE_FILE"
+  fi
+
+  begin_group "$PACKAGE_FILE (after prepare-package.sh)"
   cat "$PACKAGE_FILE"
-  echo "===== end of $PACKAGE_FILE (after prepare-package.sh) ====="
-  echo
+  end_group
 done

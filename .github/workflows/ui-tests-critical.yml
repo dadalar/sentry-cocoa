@@ -31,7 +31,7 @@ jobs:
     outputs:
       run_ui_tests_critical_for_prs: ${{ steps.changes.outputs.run_ui_tests_critical_for_prs }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Get changed files
         id: changes
         uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
@@ -42,22 +42,20 @@ jobs:
   run-tests:
     if: github.event_name != 'pull_request' || needs.files-changed.outputs.run_ui_tests_critical_for_prs == 'true'
     needs: files-changed
-    name: Test ${{matrix.name}} V4 # Up the version with every change to keep track of flaky tests
+    name: Test ${{matrix.name}} V4 on ${{matrix.runner_provider}} # Up the version with every change to keep track of flaky tests
     uses: ./.github/workflows/ui-tests-common.yml
     with:
       fastlane_command: ui_critical_tests_ios_swiftui_envelope
       build_with_make: true
       macos_version: ${{matrix.platform.runs-on}}
       files_suffix: _${{matrix.platform.xcode}}
-      test-destination-os: ${{matrix.platform.test-destination-os}}
       xcode_version: ${{matrix.platform.xcode}}
       platform: ${{matrix.platform.platform}}
-      device: ${{matrix.platform.device}}
-      # We run UI tests only on Cirrus Labs for now.
-      run_on_cirrus_labs: true
+      runner_provider: ${{matrix.runner_provider}}
     strategy:
       fail-fast: false
       matrix:
+        runner_provider: ["cirrus", "bitrise"]
         include:
           # macos-14 iOS 17 not included due to the XCUIServerNotFound errors causing flaky tests
 
@@ -67,19 +65,15 @@ jobs:
           - name: iOS 18
             platform:
               runs-on: sequoia
-              xcode: "16.4"
-              test-destination-os: "18.4"
+              xcode: "16"
               platform: "iOS"
-              device: "iPhone 16 Pro"
 
           # iOS 26 - Use pre-installed iOS 26.1 runtime on macOS-26
           - name: iOS 26
             platform:
               runs-on: tahoe
-              xcode: "26.1.1"
-              test-destination-os: "26.1"
+              xcode: "26"
               platform: "iOS"
-              device: "iPhone 17 Pro"
 
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -87,14 +81,20 @@ jobs:
   run-swiftui-crash-test:
     if: github.event_name != 'pull_request' || needs.files-changed.outputs.run_ui_tests_critical_for_prs == 'true'
     needs: files-changed
-    name: Run SwiftUI Crash Test
-    runs-on:
-      - "ghcr.io/cirruslabs/macos-runner:sequoia,runner_concurrency_group=${{ github.run_id }}"
-      - "runner_group_id:10"
+    name: Run SwiftUI Crash Test on ${{matrix.runner_provider}}
+    continue-on-error: ${{ matrix.runner_provider == 'bitrise' }}
+    runs-on: ${{ matrix.runner_provider == 'bitrise' && fromJSON(format('["bitrise_pool_name:{0}"]', 'sequoia')) || fromJSON(format('["ghcr.io/cirruslabs/macos-runner:{0},runner_concurrency_group={1}", "runner_group_id:10"]', 'sequoia', github.run_id)) }}
+    strategy:
+      matrix:
+        runner_provider: ["cirrus", "bitrise"]
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - run: ./scripts/ci-select-xcode.sh 16.4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Setup Xcode
+        id: setup-xcode
+        uses: ./.github/actions/setup-xcode
+        with:
+          version: "16"
 
       - run: make init-ci-build
       - run: make xcode-ci
@@ -107,12 +107,14 @@ jobs:
         # Ideally we will not need this, but CI sometimes is failing to load some runtimes, this will ensure they are loaded
         timeout-minutes: 5 # 5 minutes timeout
         env:
-          OS_VERSION: "18.4"
+          OS_VERSION: ${{ steps.setup-xcode.outputs.ios-simulator-os }}
           PLATFORM: "iOS"
         run: ./scripts/ci-ensure-runtime-loaded.sh --os-version "$OS_VERSION" --platform "$PLATFORM"
 
       - name: Boot simulator
-        run: ./scripts/ci-boot-simulator.sh
+        env:
+          OS_VERSION: ${{ steps.setup-xcode.outputs.ios-simulator-os }}
+        run: ./scripts/ci-boot-simulator.sh --device "iPhone 16 Pro" --os-version "$OS_VERSION"
 
       - name: Run SwiftUI Crash Test
         run: |
@@ -122,7 +124,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
-          name: swiftui-crash-test-screenshots
+          name: swiftui-crash-test-screenshots-${{ matrix.runner_provider }}
           path: swiftui-crash-test-screenshots
 
       - name: Collect Logs
@@ -133,7 +135,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
-          name: swiftui-crash-test-log.logarchive
+          name: swiftui-crash-test-log-${{ matrix.runner_provider }}.logarchive
           path: swiftui-crash-test-log.logarchive
 
       - name: Run CI Diagnostics

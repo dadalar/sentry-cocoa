@@ -66,6 +66,19 @@ class SentryHubTests: XCTestCase {
             return hub
         }
     }
+
+    private class TestSessionListener: NSObject, SentrySessionListener {
+        let startedSessions = Invocations<SentrySession>()
+        let endedSessions = Invocations<SentrySession>()
+
+        func sentrySessionStarted(session: SentrySession) {
+            startedSessions.record(session)
+        }
+
+        func sentrySessionEnded(session: SentrySession) {
+            endedSessions.record(session)
+        }
+    }
     
     private var fixture: Fixture!
     private lazy var sut = fixture.getSut()
@@ -203,7 +216,7 @@ class SentryHubTests: XCTestCase {
             dateProvider: container.dateProvider,
             crashReporter: container.crashReporter
         )
-        let crashWrapper = SentryCrashWrapper(processInfoWrapper: processInfoWrapper, bridge: bridge)
+        let crashWrapper = SentryDefaultCrashReporter(processInfoWrapper: processInfoWrapper, bridge: bridge)
         
         // Act
         let hub = SentryHubInternal(client: nil, andScope: Scope(), andCrashWrapper: crashWrapper, andDispatchQueue: TestSentryDispatchQueueWrapper())
@@ -224,7 +237,7 @@ class SentryHubTests: XCTestCase {
             dateProvider: container.dateProvider,
             crashReporter: container.crashReporter
         )
-        let crashWrapper = SentryCrashWrapper(processInfoWrapper: processInfoWrapper, bridge: bridge)
+        let crashWrapper = SentryDefaultCrashReporter(processInfoWrapper: processInfoWrapper, bridge: bridge)
         
         // Act
         let hub = SentryHubInternal(client: nil, andScope: Scope(), andCrashWrapper: crashWrapper, andDispatchQueue: TestSentryDispatchQueueWrapper())
@@ -248,7 +261,7 @@ class SentryHubTests: XCTestCase {
             dateProvider: container.dateProvider,
             crashReporter: container.crashReporter
         )
-        let crashWrapper = SentryCrashWrapper(processInfoWrapper: processInfoWrapper, bridge: bridge)
+        let crashWrapper = SentryDefaultCrashReporter(processInfoWrapper: processInfoWrapper, bridge: bridge)
         
         // Act
         let hub = SentryHubInternal(client: nil, andScope: Scope(), andCrashWrapper: crashWrapper, andDispatchQueue: TestSentryDispatchQueueWrapper())
@@ -966,6 +979,38 @@ class SentryHubTests: XCTestCase {
         // Assert
         let session = try XCTUnwrap(sut.session)
         XCTAssertEqual(session.errors, UInt(captureCount))
+    }
+
+    func testStartSession_NotifiesSessionListenerOnMainQueue() {
+        let listener = TestSessionListener()
+        sut.registerSessionListener(listener)
+        fixture.dispatchQueueWrapper.blockBeforeMainBlock = { false }
+
+        sut.startSession()
+
+        XCTAssertEqual(1, fixture.dispatchQueueWrapper.blockOnMainInvocations.count)
+        XCTAssertEqual(0, listener.startedSessions.count)
+
+        fixture.dispatchQueueWrapper.blockOnMainInvocations.last?()
+
+        XCTAssertEqual(1, listener.startedSessions.count)
+    }
+
+    func testEndSession_NotifiesSessionListenerOnMainQueue() {
+        sut.startSession()
+
+        let listener = TestSessionListener()
+        sut.registerSessionListener(listener)
+        fixture.dispatchQueueWrapper.blockBeforeMainBlock = { false }
+
+        sut.endSession()
+
+        XCTAssertEqual(1, fixture.dispatchQueueWrapper.blockOnMainInvocations.count)
+        XCTAssertEqual(0, listener.endedSessions.count)
+
+        fixture.dispatchQueueWrapper.blockOnMainInvocations.last?()
+
+        XCTAssertEqual(1, listener.endedSessions.count)
     }
 
     func testCaptureEventIncrementingSessionErrorCount_WithStartedSession_OnlySendsSessionInit() {

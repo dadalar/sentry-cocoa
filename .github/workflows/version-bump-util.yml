@@ -26,7 +26,7 @@ jobs:
     outputs:
       run_version_bump_util_for_prs: ${{ steps.changes.outputs.run_version_bump_util_for_prs }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Get changed files
         id: changes
         uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
@@ -37,20 +37,19 @@ jobs:
   run-version-bump:
     if: github.event_name != 'pull_request' || needs.files-changed.outputs.run_version_bump_util_for_prs == 'true'
     needs: files-changed
-    # The release workflow uses the Makefile to bump the version so it needs to be tested.
-    name: Run Version Bump (Makefile)
+    name: Run Version Bump (Scripts)
     # We intentionally run this on ubuntu because the release workflow also runs on ubuntu, which uses the version bump util.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Generate Version Number
         id: generate-version-number
         run: |
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
           echo "VERSION=100.0.$TIMESTAMP" >> $GITHUB_OUTPUT
       # We don't care which version we bump to, as long as it's a valid semver
-      - run: make bump-version TO=${{ steps.generate-version-number.outputs.VERSION }}
-      - run: make verify-version TO=${{ steps.generate-version-number.outputs.VERSION }}
+      - run: ./scripts/bump-version.sh --version "${{ steps.generate-version-number.outputs.VERSION }}"
+      - run: ./scripts/verify-version.sh --version "${{ steps.generate-version-number.outputs.VERSION }}"
 
   run-version-bump-script:
     if: github.event_name != 'pull_request' || needs.files-changed.outputs.run_version_bump_util_for_prs == 'true'
@@ -59,7 +58,7 @@ jobs:
     name: Run Version Bump (Shell Script)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Generate Version Number
         id: generate-version-number
         run: |
@@ -85,12 +84,14 @@ jobs:
           echo "<FAKE DYNAMIC WITH ARM64E ZIP>" > XCFrameworkBuildPath/Sentry-Dynamic-WithARM64e.xcframework.zip
           echo "<FAKE WITHOUT UIKIT OR APPKIT ZIP>" > XCFrameworkBuildPath/Sentry-WithoutUIKitOrAppKit.xcframework.zip
           echo "<FAKE WITHOUT UIKIT OR APPKIT WITH ARM64E ZIP>" > XCFrameworkBuildPath/Sentry-WithoutUIKitOrAppKit-WithARM64e.xcframework.zip
+          echo "<FAKE SENTRYOBJC DYNAMIC ZIP>" > XCFrameworkBuildPath/SentryObjC-Dynamic.xcframework.zip
+          echo "<FAKE SENTRYOBJC STATIC ZIP>" > XCFrameworkBuildPath/SentryObjC-Static.xcframework.zip
 
       - name: Bump version
         run: ./scripts/bump.sh ${{ steps.generate-version-number.outputs.OLD_VERSION }} ${{ steps.generate-version-number.outputs.NEW_VERSION }}
 
       - name: Verify outputs of bump.sh
-        run: make verify-version TO=${{ steps.generate-version-number.outputs.NEW_VERSION }}
+        run: ./scripts/verify-version.sh --version "${{ steps.generate-version-number.outputs.NEW_VERSION }}"
 
       - name: Verify outputs of update-package-sha.sh
         run: |
@@ -100,6 +101,8 @@ jobs:
             --dynamic-with-arm64e-checksum "bbb84b054e5792aa705b95541aa4585f793e566a6b95638f8fef8e308d9782c3" \
             --without-uikit-or-appkit-checksum "c647afe93889063325b5dfcabf43101749f6a8f37008cca858833ed280d2a84e" \
             --without-uikit-or-appkit-with-arm64e-checksum "af5af7edc8e107fe04b905bd23524fdc93914fce8e1bd72ccf281408efff9a47" \
+            --sentryobjc-dynamic-checksum "cf74ef3cb789b9cabbd3c366bf717a4f6811ce3ac8b97bc78bb0e210593e4c82" \
+            --sentryobjc-static-checksum "75efb1ba6f25d0f666d07474cf3e35bb56688bb938d04ba48bd42a986f8810a1" \
             --last-release-runid "${{ github.run_id }}"
 
   # This check validates that either version-bump-util passed or was skipped, which allows us

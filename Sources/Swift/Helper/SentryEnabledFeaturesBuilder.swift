@@ -46,8 +46,14 @@ import Foundation
         if options.experimental.enableUnhandledCPPExceptionsV2 {
             features.append("unhandledCPPExceptionsV2")
         }
+        if options.experimental.enableReplayNetworkDetailsCapturing {
+            features.append("replayNetworkDetails")
+        }
         if options.enableMetrics {
             features.append("metrics")
+        }
+        if options.experimental.enableStandaloneAppStartTracing {
+            features.append("standaloneAppStartTracing")
         }
 
         return features

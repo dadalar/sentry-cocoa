@@ -320,8 +320,10 @@
     /// duration a user has to wait after clicking the app icon until the app is responsive.
     ///
     /// @note You can filter for different app start types in Discover with
-    /// @c app_start_type:cold.prewarmed ,
-    /// @c app_start_type:warm.prewarmed , @c app_start_type:cold , and @c app_start_type:warm .
+    /// `app.vitals.start.type:cold.prewarmed`,
+    /// `app.vitals.start.type:warm.prewarmed`,
+    /// `app.vitals.start.type:cold`, and
+    /// `app.vitals.start.type:warm`.
     ///
     /// @warning This feature is not available in @c DebugWithoutUIKit and @c ReleaseWithoutUIKit
     /// configurations even when targeting iOS or tvOS platforms.
@@ -677,8 +679,12 @@
     @_spi(Private) @objc public var userFeedbackConfiguration: SentryUserFeedbackConfiguration?
     
     /// A block that configures the user feedback feature.
+    ///
+    /// Use this to customize the form shown by `SentrySDK.feedback.show()`,
+    /// `SentrySDK.FeedbackForm`, or `sentryFeedback(isPresented:)`. Configure the deprecated
+    /// managed widget only via `SentryUserFeedbackConfiguration.configureWidget`.
     @available(iOSApplicationExtension, unavailable)
-    @objc public var configureUserFeedback: ((SentryUserFeedbackConfiguration) -> Void)? {
+    @objc public var configureUserFeedback: SentryUserFeedbackConfigurationCallback? {
         didSet {
             let config = SentryUserFeedbackConfiguration()
             configureUserFeedback?(config)

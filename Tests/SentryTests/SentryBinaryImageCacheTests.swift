@@ -2,6 +2,12 @@
 @_spi(Private) import SentryTestUtils
 import XCTest
 
+private let externalAddedCallbackInvocations = Invocations<Void>()
+
+private func recordExternalAddedCallback(_ image: UnsafePointer<SentryCrashBinaryImage>?) {
+    externalAddedCallbackInvocations.record(())
+}
+
 class SentryBinaryImageCacheTests: XCTestCase {
     private var sut: SentryBinaryImageCache {
         SentryDependencyContainer.sharedInstance().binaryImageCache
@@ -9,11 +15,14 @@ class SentryBinaryImageCacheTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
+        sentrycrashbic_useFreshTestCacheState()
         sut.start(false)
     }
 
     override func tearDown() {
         sut.stop()
+        sentrycrashbic_useDefaultCacheState()
+        SentryDependencyContainer.reset()
         super.tearDown()
     }
     
@@ -23,6 +32,33 @@ class SentryBinaryImageCacheTests: XCTestCase {
                              address: binaryImage.address,
                              size: binaryImage.size,
                              uuid: binaryImage.uuid)
+    }
+
+    func testStart_WhenAlreadyStarted_shouldNotResetCache() throws {
+        let binaryImage = createCrashBinaryImage(100)
+        addBinaryImageToSut(binaryImage)
+
+        XCTAssertEqual("Expected Name at 100", sut.imageByAddress(100)?.name)
+
+        sut.start(true)
+
+        let cache = try XCTUnwrap(sut.cache)
+        XCTAssertEqual(1, cache.count)
+        XCTAssertEqual("Expected Name at 100", sut.imageByAddress(100)?.name)
+    }
+
+    func testStop_WhenAlreadyStopped_shouldNotUnregisterExternalCallbacks() {
+        sut.stop()
+        externalAddedCallbackInvocations.removeAll()
+        sentrycrashbic_registerAddedCallback(recordExternalAddedCallback)
+
+        sut.stop()
+
+        // Starting the C cache triggers the currently registered added callback.
+        sentrycrashbic_startCache()
+
+        // If the second stop removed the external callback, this would stay at 0.
+        XCTAssertGreaterThan(externalAddedCallbackInvocations.count, 0)
     }
 
     func testBinaryImageAdded() {
@@ -129,25 +165,6 @@ class SentryBinaryImageCacheTests: XCTestCase {
         XCTAssertNil(sut.imageByAddress(399))
     }
     
-    func testImagePathByName() {
-        let binaryImage = createCrashBinaryImage(0)
-        let binaryImage2 = createCrashBinaryImage(1)
-        addBinaryImageToSut(binaryImage)
-        addBinaryImageToSut(binaryImage2)
-        
-        let paths = sut.imagePathsFor(inAppInclude: "Expected Name at 0")
-        XCTAssertEqual(paths.first, "Expected Name at 0")
-        
-        let paths2 = sut.imagePathsFor(inAppInclude: "Expected Name at 1")
-        XCTAssertEqual(paths2.first, "Expected Name at 1")
-        
-        let bothPaths = sut.imagePathsFor(inAppInclude: "Expected")
-        XCTAssertEqual(bothPaths, ["Expected Name at 0", "Expected Name at 1"])
-        
-        let didNotFind = sut.imagePathsFor(inAppInclude: "Name at 0")
-        XCTAssertTrue(didNotFind.isEmpty)
-    }
-    
     func testBinaryImageWithNULLName_DoesNotAddImage() {
         let address = UInt64(100)
     
@@ -218,8 +235,6 @@ class SentryBinaryImageCacheTests: XCTestCase {
         
         let expectation = expectation(description: "Add images on background thread")
         expectation.expectedFulfillmentCount = count
-        
-        self.sut.start(false)
         
         for i in 0..<count {
             DispatchQueue.global().async {

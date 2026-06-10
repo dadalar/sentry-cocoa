@@ -44,16 +44,20 @@ SentrySDK (public entry point)
 
 ### Module Layout (`Sources/`)
 
-| Directory             | Contents                                                            |
-| --------------------- | ------------------------------------------------------------------- |
-| `Sentry/`             | ObjC core: SDK, Hub, Client, Scope, Transport, Serialization        |
-| `Sentry/Public/`      | Public ObjC headers                                                 |
-| `Sentry/Profiling/`   | C++/ObjC++ profiler, sampling, serialization                        |
-| `Swift/`              | Swift layer: integrations, networking, persistence, tools           |
-| `Swift/Integrations/` | Feature integrations (ANR, Performance, SessionReplay, Crash, etc.) |
-| `SentryCrash/`        | C/C++ crash reporting (KSCrash fork)                                |
-| `SentryCppHelper/`    | C++ helpers (backtrace, sampling profiler, thread handle)           |
-| `SentrySwiftUI/`      | SwiftUI tracing (`TracedView`)                                      |
+| Directory             | Contents                                                               |
+| --------------------- | ---------------------------------------------------------------------- |
+| `Sentry/`             | ObjC core: SDK, Hub, Client, Scope, Transport, Serialization           |
+| `Sentry/Public/`      | Public ObjC headers                                                    |
+| `Sentry/Profiling/`   | C++/ObjC++ profiler, sampling, serialization                           |
+| `Swift/`              | Swift layer: integrations, networking, persistence, tools              |
+| `Swift/Integrations/` | Feature integrations (ANR, Performance, SessionReplay, Crash, etc.)    |
+| `SentryCrash/`        | C/C++ crash reporting (KSCrash fork)                                   |
+| `SentryCppHelper/`    | C++ helpers (backtrace, sampling profiler, thread handle)              |
+| `SentrySwiftUI/`      | SwiftUI tracing (`TracedView`)                                         |
+| `SentryObjC/`         | Pure ObjC headers + dummy `.m` — public interface consumers import     |
+| `SentryObjCCompat/`   | Swift `@objc` wrappers — per-type wrapper classes with internal import |
+
+> **Before touching `SentryObjC*` targets** (headers, wrappers, build config), read [`develop-docs/SENTRY-OBJC.md`](develop-docs/SENTRY-OBJC.md). It defines the two-target architecture, type placement rules, naming conventions, and stability contract. Violations cause linker failures or ABI breaks.
 
 ## Skills & MCP (dotagents)
 
@@ -95,7 +99,8 @@ search_issues  → check for new/regressed issues
 - **Avoid redundant `cd`** — do not prefix every command with `cd <path> &&`. Change directory once if needed, then verify with `pwd`
 - **Wildcard permissions** — many commands are pre-approved with wildcards (e.g., `git add:*`). Flags like `-C` change the command prefix (`git -C path add` ≠ `git add`), triggering a confirmation prompt. Avoid `-C` when you can change directory instead
 - **Prefer small, focused commands** over one massive pipeline. Break complex operations into multiple steps
-- **JSON processing** — always use `jq`; do not shell out to `node` or `python` for JSON parsing
+- **JSON tasks** — always use `jq`; do not shell out to `node` or `python` for JSON parsing
+- **YAML tasks** — always use `yq`; do not shell out to `node` or `python` for YAML parsing
 - **GitHub** — prefer `gh` CLI over web scraping when interacting with GitHub.com
 
 ## Verification Loop
@@ -113,7 +118,7 @@ make analyze
 make build-ios
 
 # 4. Test (targeted — see Tests/AGENTS.md for ONLY_TESTING usage)
-make test-ios ONLY_TESTING=<AffectedTestClass>
+make test-ios ONLY_TESTING=SentryTests/SentryHttpTransportTests
 
 # 5. If the public API surface changed (Swift/ObjC public headers, @objc/public symbols)
 make generate-public-api  # regenerates sdk_api.json; commit any diff
@@ -124,6 +129,7 @@ make test-sample-iOS-Swift-ui  # if UI behavior changed
 ```
 
 - **Public API regeneration is mandatory** for any PR that adds, removes, or renames `public` Swift symbols, `@objc` properties/methods, or ObjC public headers. The `api-stability` CI check diffs `sdk_api.json` against the committed file and fails the PR otherwise. Run `make generate-public-api` and commit the resulting `sdk_api.json` (and `sdk_api_sentryswiftui.json` if it changes) in the same PR. The script auto-locates Xcode 16 if it isn't the active toolchain.
+- **SentryObjC wrapper** — any new public API must also be exposed in the ObjC wrapper SDK (`SentryObjC` / `SentryObjCCompat`). See [`develop-docs/SENTRY-OBJC.md`](develop-docs/SENTRY-OBJC.md) for the wrapper pattern: add a header in `Sources/SentryObjC/Public/` and a wrapper in `Sources/SentryObjCCompat/`. Reference example: [#7996](https://github.com/getsentry/sentry-cocoa/pull/7996).
 
 ### Platform Decision Tree
 
