@@ -219,7 +219,7 @@ import UIKit
     private func videoFramesForRendering(beginning: Date, end: Date) -> [SentryReplayFrame] {
         guard end > beginning else { return [] }
 
-        var videoFrames = self._frames.filter { $0.time >= beginning && $0.time <= end }
+        var videoFrames = self._frames.filter { $0.time >= beginning && $0.time < end }
         guard let firstFrame = videoFrames.first else {
             guard let previousFrame = frameBefore(beginning) else { return [] }
             return [frame(previousFrame, movedTo: beginning)]

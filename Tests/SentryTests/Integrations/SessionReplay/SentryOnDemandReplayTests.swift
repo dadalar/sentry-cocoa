@@ -137,6 +137,38 @@ class SentryOnDemandReplayTests: XCTestCase {
         try FileManager.default.removeItem(at: info.path)
     }
 
+    func testGenerateVideo_whenFrameExistsAtEnd_shouldKeepSegmentDuration() throws {
+        // -- Arrange --
+        let sut = getSut()
+
+        let start = Date(timeIntervalSinceReferenceDate: 0)
+        for i in 0...5 {
+            sut.addFrameAsync(timestamp: start.addingTimeInterval(TimeInterval(i)), maskedViewImage: UIImage.add)
+        }
+
+        // -- Act --
+        let firstSegment = sut.createVideoWith(beginning: start, end: start.addingTimeInterval(5))
+        let secondSegment = sut.createVideoWith(beginning: start.addingTimeInterval(5), end: start.addingTimeInterval(10))
+
+        // -- Assert --
+        XCTAssertEqual(firstSegment.count, 1)
+        let firstInfo = try XCTUnwrap(firstSegment.first)
+        XCTAssertEqual(firstInfo.duration, 5)
+        XCTAssertEqual(firstInfo.frameCount, 5)
+        XCTAssertEqual(firstInfo.start, start)
+        XCTAssertEqual(firstInfo.end, start.addingTimeInterval(5))
+
+        XCTAssertEqual(secondSegment.count, 1)
+        let secondInfo = try XCTUnwrap(secondSegment.first)
+        XCTAssertEqual(secondInfo.duration, 5)
+        XCTAssertEqual(secondInfo.frameCount, 5)
+        XCTAssertEqual(secondInfo.start, start.addingTimeInterval(5))
+        XCTAssertEqual(secondInfo.end, start.addingTimeInterval(10))
+
+        try FileManager.default.removeItem(at: firstInfo.path)
+        try FileManager.default.removeItem(at: secondInfo.path)
+    }
+
     func testGenerateVideo_whenOnlyPreviousFrameExists_shouldHoldPreviousFrameFromBeginning() throws {
         // -- Arrange --
         let sut = getSut()
