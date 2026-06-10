@@ -326,6 +326,7 @@ import UIKit
     ) {
         runOnMainThread { [weak self] in
             guard let self = self else { return }
+            defer { self.finishProcessingScreenshot() }
 
             if deferralDecision == .captureAfterDeferral {
                 self.adaptiveScreenshotInterval = 0
@@ -637,7 +638,8 @@ import UIKit
     ) {
         SentrySDKLog.debug("[Session Replay] Creating replay video started at date: \(startedAt), replayType: \(replayType)")
         // Creating a video is computationally expensive, therefore perform it on a background queue.
-        self.replayMaker.createVideoInBackgroundWith(beginning: startedAt, end: endedAt) { videos in
+        self.replayMaker.createVideoInBackgroundWith(beginning: startedAt, end: endedAt) { [weak self] videos in
+            guard let self = self else { return }
             SentrySDKLog.debug("[Session Replay] Created replay video with \(videos.count) segments")
             for video in videos {
                 self.processNewlyAvailableSegment(videoInfo: video, replayType: replayType)
@@ -764,8 +766,13 @@ import UIKit
     private func newImage(timestamp: Date, maskedViewImage: UIImage, forScreen screen: String?) {
         SentrySDKLog.debug("[Session Replay] New frame available, for screen: \(screen ?? "nil")")
         lock.synchronized {
-            processingScreenshot = false
             replayMaker.addFrameAsync(timestamp: timestamp, maskedViewImage: maskedViewImage, forScreen: screen)
+        }
+    }
+
+    private func finishProcessingScreenshot() {
+        lock.synchronized {
+            processingScreenshot = false
         }
     }
 

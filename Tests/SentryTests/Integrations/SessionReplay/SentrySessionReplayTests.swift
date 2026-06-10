@@ -869,6 +869,25 @@ class SentrySessionReplayTests: XCTestCase {
         XCTAssertNil(weakSut)
     }
 
+    @available(iOS 16.0, tvOS 16, *)
+    func testDealloc_DoesNotRetainSessionReplayDuringVideoCreation() throws {
+        let fixture = Fixture()
+        fixture.replayMaker.deferCreateVideoCompletion = true
+
+        weak var weakSut: SentrySessionReplay?
+        autoreleasepool {
+            let sut = fixture.getSut(options: SentryReplayOptions(sessionSampleRate: 1, onErrorSampleRate: 1))
+            weakSut = sut
+            sut.start(rootView: fixture.rootView, fullSession: true)
+
+            fixture.dateProvider.advance(by: 6)
+            Dynamic(sut).newFrame(nil)
+            XCTAssertNotNil(fixture.replayMaker.lastCallToCreateVideo)
+        }
+
+        XCTAssertNil(weakSut)
+    }
+
     // MARK: - Frame Rate Tests
 
     func testFrameRate_1FPS_takesScreenshotsAtCorrectInterval() {
