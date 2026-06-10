@@ -64,6 +64,34 @@ class SentryOnDemandReplayTests: XCTestCase {
         XCTAssertEqual(frames.first?.time, start.addingTimeInterval(5))
         XCTAssertEqual(frames.last?.time, start.addingTimeInterval(9))
     }
+
+    func testDeinit_whenFrameIsRetainedBeforeCurrentFrames_shouldRemoveRetainedFrameFile() throws {
+        let start = Date(timeIntervalSinceReferenceDate: 0)
+        let retainedFramePath = outputPath
+            .appendingPathComponent("\(start.timeIntervalSinceReferenceDate)")
+            .appendingPathExtension("png")
+            .path
+
+        let processingQueue = SentryDispatchQueueWrapper()
+        let workerQueue = SentryDispatchQueueWrapper()
+        var sut: SentryOnDemandReplay? = SentryOnDemandReplay(
+            outputPath: outputPath.path,
+            processingQueue: processingQueue,
+            assetWorkerQueue: workerQueue
+        )
+
+        sut?.addFrameAsync(timestamp: start, maskedViewImage: UIImage.add)
+        sut?.addFrameAsync(timestamp: start.addingTimeInterval(1), maskedViewImage: UIImage.add)
+        processingQueue.queue.sync {}
+        sut?.releaseFramesUntil(start.addingTimeInterval(1))
+        processingQueue.queue.sync {}
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: retainedFramePath))
+
+        sut = nil
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: retainedFramePath))
+    }
     
     func testFramesWithScreenName() {
         let sut = getSut()

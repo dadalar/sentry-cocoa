@@ -14,12 +14,26 @@ class SentrySessionReplayTests: XCTestCase {
         var lastImageCall: UIView?
         var imageCallCount = 0
         var beforeComplete: (() -> Void)?
+        var completeAsync = false
+        private var pendingCompletions = [Sentry.ScreenshotCallback]()
 
         func image(view: UIView, onComplete: @escaping Sentry.ScreenshotCallback) {
             lastImageCall = view
             imageCallCount += 1
+            if completeAsync {
+                pendingCompletions.append(onComplete)
+                return
+            }
+            complete(onComplete)
+        }
+
+        func completePendingImage() {
+            complete(pendingCompletions.removeFirst())
+        }
+
+        private func complete(_ completion: Sentry.ScreenshotCallback) {
             beforeComplete?()
-            onComplete(UIImage.add)
+            completion(UIImage.add)
         }
     }
 
@@ -67,7 +81,14 @@ class SentrySessionReplayTests: XCTestCase {
         }
         
         var createVideoResults = [[SentryVideoInfo]]()
-        var lastCallToCreateVideo: CreateVideoCall?
+        var createVideoCalls = [CreateVideoCall]()
+        var deferCreateVideoCompletion = false
+        private var pendingCreateVideoCompletions = [(CreateVideoCall, ([SentryVideoInfo]) -> Void)]()
+
+        var lastCallToCreateVideo: CreateVideoCall? {
+            createVideoCalls.last
+        }
+
         func createVideoInBackgroundWith(
             beginning: Date,
             end: Date,
@@ -75,13 +96,30 @@ class SentrySessionReplayTests: XCTestCase {
         ) {
             // Note: This implementation is just to satisfy the protocol.
             // If possible, keep the tests logic the synchronous version `createVideoWith`
+            if deferCreateVideoCompletion {
+                let call = CreateVideoCall(beginning: beginning, end: end)
+                createVideoCalls.append(call)
+                pendingCreateVideoCompletions.append((call, completion))
+                return
+            }
+
             let videos = createVideoWith(beginning: beginning, end: end)
             completion(videos)
         }
 
         func createVideoWith(beginning: Date, end: Date) -> [Sentry.SentryVideoInfo] {
-            lastCallToCreateVideo = CreateVideoCall(beginning: beginning, end: end)
+            let call = CreateVideoCall(beginning: beginning, end: end)
+            createVideoCalls.append(call)
 
+            return videos(for: call)
+        }
+
+        func completeNextCreateVideo() {
+            let (call, completion) = pendingCreateVideoCompletions.removeFirst()
+            completion(videos(for: call))
+        }
+
+        private func videos(for call: CreateVideoCall) -> [Sentry.SentryVideoInfo] {
             if !createVideoResults.isEmpty {
                 let videos = createVideoResults.removeFirst()
                 videos.forEach { createVideoCallBack?($0) }
@@ -91,6 +129,8 @@ class SentrySessionReplayTests: XCTestCase {
             let outputFileURL = FileManager.default.temporaryDirectory.appendingPathComponent("tempvideo.mp4")
             
             XCTAssertNoThrow(try "Video Data".write(to: outputFileURL, atomically: true, encoding: .utf8))
+            let beginning = call.beginning
+            let end = call.end
             let videoInfo = SentryVideoInfo(path: outputFileURL, height: 1_024, width: 480, duration: end.timeIntervalSince(overrideBeginning ?? beginning), frameCount: 5, frameRate: 1, start: overrideBeginning ?? beginning, end: end, fileSize: 10, screens: screens)
             
             createVideoCallBack?(videoInfo)
@@ -499,6 +539,35 @@ class SentrySessionReplayTests: XCTestCase {
         XCTAssertEqual(secondCall.beginning, expectedStart)
         XCTAssertEqual(secondCall.end, expectedEnd)
         XCTAssertNotNil(fixture.lastReplayRecording)
+    }
+
+    func testPause_whenSegmentCreationIsPending_shouldPreparePauseSegmentAfterPendingCompletes() throws {
+        // -- Arrange --
+        let fixture = Fixture()
+        fixture.replayMaker.deferCreateVideoCompletion = true
+        let sut = fixture.getSut(options: SentryReplayOptions(sessionSampleRate: 1, onErrorSampleRate: 1))
+        sut.start(rootView: fixture.rootView, fullSession: true)
+
+        // -- Act --
+        fixture.dateProvider.advance(by: 6)
+        Dynamic(sut).newFrame(nil)
+        let firstCall = try XCTUnwrap(fixture.replayMaker.lastCallToCreateVideo)
+
+        sut.pause()
+        let createCallsAfterPause = fixture.replayMaker.createVideoCalls
+
+        fixture.replayMaker.completeNextCreateVideo()
+        let createCallsAfterPendingCompletes = fixture.replayMaker.createVideoCalls
+
+        // -- Assert --
+        XCTAssertEqual(firstCall.beginning, TestCurrentDateProvider.defaultStartingDate)
+        XCTAssertEqual(firstCall.end, TestCurrentDateProvider.defaultStartingDate.addingTimeInterval(5))
+        XCTAssertEqual(createCallsAfterPause.count, 1)
+        XCTAssertEqual(createCallsAfterPendingCompletes.count, 2)
+
+        let pauseCall = try XCTUnwrap(createCallsAfterPendingCompletes.last)
+        XCTAssertEqual(pauseCall.beginning, firstCall.end)
+        XCTAssertEqual(pauseCall.end, TestCurrentDateProvider.defaultStartingDate.addingTimeInterval(6))
     }
     
     func testPauseResume_FullSession() {
@@ -920,6 +989,64 @@ class SentrySessionReplayTests: XCTestCase {
         // -- Assert --
         XCTAssertEqual(capturesAfterSlowFrame, 1)
         XCTAssertEqual(capturesBeforeBackoffExpires, 1)
+        XCTAssertEqual(fixture.screenshotProvider.imageCallCount, 2)
+    }
+
+    func testNewFrame_whenAsyncScreenshotCaptureIsSlow_shouldBackOffCaptureInterval() {
+        // -- Arrange --
+        let fixture = Fixture()
+        let options = SentryReplayOptions(sessionSampleRate: 1, onErrorSampleRate: 1)
+        options.frameRate = 1
+        fixture.screenshotProvider.completeAsync = true
+        fixture.screenshotProvider.beforeComplete = {
+            fixture.dateProvider.advance(by: 0.06)
+        }
+        let sut = fixture.getSut(options: options)
+        sut.start(rootView: fixture.rootView, fullSession: true)
+
+        // -- Act --
+        fixture.dateProvider.advance(by: 1)
+        Dynamic(sut).newFrame(nil)
+        fixture.screenshotProvider.completePendingImage()
+        let capturesAfterSlowFrame = fixture.screenshotProvider.imageCallCount
+        fixture.screenshotProvider.completeAsync = false
+        fixture.screenshotProvider.beforeComplete = nil
+
+        fixture.dateProvider.advance(by: 1.99)
+        Dynamic(sut).newFrame(nil)
+        let capturesBeforeBackoffExpires = fixture.screenshotProvider.imageCallCount
+
+        fixture.dateProvider.advance(by: 0.02)
+        Dynamic(sut).newFrame(nil)
+
+        // -- Assert --
+        XCTAssertEqual(capturesAfterSlowFrame, 1)
+        XCTAssertEqual(capturesBeforeBackoffExpires, 1)
+        XCTAssertEqual(fixture.screenshotProvider.imageCallCount, 2)
+    }
+
+    func testResume_whenCaptureBackedOff_shouldResetCaptureInterval() {
+        // -- Arrange --
+        let fixture = Fixture()
+        let options = SentryReplayOptions(sessionSampleRate: 1, onErrorSampleRate: 1)
+        options.frameRate = 1
+        fixture.screenshotProvider.beforeComplete = {
+            fixture.dateProvider.advance(by: 0.06)
+        }
+        let sut = fixture.getSut(options: options)
+        sut.start(rootView: fixture.rootView, fullSession: true)
+
+        fixture.dateProvider.advance(by: 1)
+        Dynamic(sut).newFrame(nil)
+        fixture.screenshotProvider.beforeComplete = nil
+
+        // -- Act --
+        sut.pause()
+        sut.resume()
+        fixture.dateProvider.advance(by: 1)
+        Dynamic(sut).newFrame(nil)
+
+        // -- Assert --
         XCTAssertEqual(fixture.screenshotProvider.imageCallCount, 2)
     }
 

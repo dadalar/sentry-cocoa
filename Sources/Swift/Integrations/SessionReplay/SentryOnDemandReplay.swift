@@ -42,6 +42,12 @@ import UIKit
         self.processingQueue = processingQueue
         self.assetWorkerQueue = assetWorkerQueue
     }
+
+    deinit {
+        if let retainedFrameBeforeCurrentFrames = retainedFrameBeforeCurrentFrames {
+            removeFrameFile(retainedFrameBeforeCurrentFrames)
+        }
+    }
         
     public convenience init(
         withContentFrom outputPath: String,

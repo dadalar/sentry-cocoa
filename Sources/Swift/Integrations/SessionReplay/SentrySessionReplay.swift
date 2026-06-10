@@ -38,6 +38,7 @@ import UIKit
     private var isCaptureSchedulerRunning = false
     private var nextCaptureActivityCheckAt: Date?
     private var pendingSegmentEnd: Date?
+    private var pendingPauseSegmentEnd: Date?
     public var replayTags: [String: Any]?
 
     var isRunning: Bool {
@@ -80,13 +81,11 @@ import UIKit
         
         self.rootView = rootView
         let now = dateProvider.date()
-        lastScreenshotAt = now
-        adaptiveScreenshotInterval = 0
-        deferredScreenshotStart = nil
-        scheduleNextScreenshot(after: screenshotInterval, from: now)
+        resetCapturePacing(at: now)
         startCaptureScheduler()
         videoSegmentStart = nil
         pendingSegmentEnd = nil
+        pendingPauseSegmentEnd = nil
         currentSegmentId = 0
         sessionReplayId = SentryId()
         imageCollection = []
@@ -122,7 +121,12 @@ import UIKit
         
         stopCaptureScheduler()
         if isFullSession {
-            prepareSegmentUntil(date: dateProvider.date())
+            let pauseDate = dateProvider.date()
+            if pendingSegmentEnd == nil {
+                prepareSegmentUntil(date: pauseDate)
+            } else {
+                pendingPauseSegmentEnd = pauseDate
+            }
         }
         isSessionPaused = false
     }
@@ -148,8 +152,7 @@ import UIKit
         
         videoSegmentStart = nil
         let now = dateProvider.date()
-        lastScreenshotAt = now
-        scheduleNextScreenshot(after: screenshotInterval, from: now)
+        resetCapturePacing(at: now)
         startCaptureScheduler()
     }
 
@@ -244,6 +247,11 @@ import UIKit
         
         guard !pauseIfMaximumDurationReached(at: now) else { return }
 
+        guard !isProcessingScreenshot else {
+            prepareFullSessionSegmentsIfNeeded(until: now)
+            return
+        }
+
         guard shouldCheckCaptureActivity(at: now, isInteractiveRunLoopMode: isInteractiveRunLoopMode) else {
             prepareFullSessionSegmentsIfNeeded(until: now)
             return
@@ -271,27 +279,57 @@ import UIKit
             return
         }
 
-        guard let captureDuration = takeScreenshot(timestamp: now) else {
+        guard takeScreenshot(timestamp: now, completion: { [weak self] captureDuration in
+            self?.completeScreenshotCapture(
+                deferralDecision: deferralDecision,
+                isInteractionCapture: isInteractionCapture,
+                captureDuration: captureDuration
+            )
+        }) else {
             let finishedAt = dateProvider.date()
             lastScreenshotAt = finishedAt
             scheduleNextScreenshot(after: screenshotInterval(usesAdaptiveBackoff: !isInteractionCapture), from: finishedAt)
             prepareFullSessionSegmentsIfNeeded(until: finishedAt)
             return
         }
-
-        if deferralDecision == .captureAfterDeferral {
-            adaptiveScreenshotInterval = 0
-        } else if !isInteractionCapture {
-            updateAdaptiveScreenshotInterval(captureDuration)
-        }
-        let finishedAt = dateProvider.date()
-        lastScreenshotAt = finishedAt
-        scheduleNextScreenshot(after: screenshotInterval(usesAdaptiveBackoff: !isInteractionCapture), from: finishedAt)
-        prepareFullSessionSegmentsIfNeeded(until: now)
     }
 
     private var baseScreenshotInterval: TimeInterval {
         1.0 / Double(replayOptions.frameRate)
+    }
+
+    private var isProcessingScreenshot: Bool {
+        lock.synchronized {
+            processingScreenshot
+        }
+    }
+
+    private func resetCapturePacing(at date: Date) {
+        lastScreenshotAt = date
+        adaptiveScreenshotInterval = 0
+        deferredScreenshotStart = nil
+        scheduleNextScreenshot(after: screenshotInterval, from: date)
+    }
+
+    private func completeScreenshotCapture(
+        deferralDecision: ScreenshotDeferralDecision,
+        isInteractionCapture: Bool,
+        captureDuration: TimeInterval
+    ) {
+        runOnMainThread { [weak self] in
+            guard let self = self else { return }
+
+            if deferralDecision == .captureAfterDeferral {
+                self.adaptiveScreenshotInterval = 0
+            } else if !isInteractionCapture {
+                self.updateAdaptiveScreenshotInterval(captureDuration)
+            }
+
+            let finishedAt = self.dateProvider.date()
+            self.lastScreenshotAt = finishedAt
+            self.scheduleNextScreenshot(after: self.screenshotInterval(usesAdaptiveBackoff: !isInteractionCapture), from: finishedAt)
+            self.prepareFullSessionSegmentsIfNeeded(until: finishedAt)
+        }
     }
 
     private var screenshotInterval: TimeInterval {
@@ -482,21 +520,54 @@ import UIKit
             SentrySDKLog.debug("[Session Replay] Not preparing segment, reason: session segment duration is not positive")
             return
         }
-        guard pendingSegmentEnd == nil else { return }
 
+        let segmentStart: Date
+        let segmentEnd: Date
+        lock.lock()
+        guard pendingSegmentEnd == nil else {
+            lock.unlock()
+            return
+        }
         if videoSegmentStart == nil {
             videoSegmentStart = sessionStart ?? date
         }
 
-        guard let segmentStart = videoSegmentStart else { return }
-        guard date.timeIntervalSince(segmentStart) >= sessionSegmentDuration else { return }
+        guard let currentSegmentStart = videoSegmentStart else {
+            lock.unlock()
+            return
+        }
+        guard date.timeIntervalSince(currentSegmentStart) >= sessionSegmentDuration else {
+            lock.unlock()
+            return
+        }
 
-        let segmentEnd = segmentStart.addingTimeInterval(sessionSegmentDuration)
+        segmentStart = currentSegmentStart
+        segmentEnd = segmentStart.addingTimeInterval(sessionSegmentDuration)
         pendingSegmentEnd = segmentEnd
+        lock.unlock()
+
         if !prepareSegment(from: segmentStart, until: segmentEnd, completion: { [weak self] in
-            self?.pendingSegmentEnd = nil
+            self?.completePendingSegment(until: segmentEnd)
         }) {
+            lock.synchronized {
+                if pendingSegmentEnd == segmentEnd {
+                    pendingSegmentEnd = nil
+                }
+            }
+        }
+    }
+
+    private func completePendingSegment(until segmentEnd: Date) {
+        lock.lock()
+        if pendingSegmentEnd == segmentEnd {
             pendingSegmentEnd = nil
+        }
+        let pauseSegmentEnd = pendingPauseSegmentEnd
+        pendingPauseSegmentEnd = nil
+        lock.unlock()
+
+        if let pauseSegmentEnd = pauseSegmentEnd {
+            prepareSegmentUntil(date: pauseSegmentEnd)
         }
     }
 
@@ -647,11 +718,10 @@ import UIKit
         return filteredResult.compactMap(breadcrumbConverter.convert(from:))
     }
     
-    @discardableResult
-    private func takeScreenshot(timestamp: Date) -> TimeInterval? {
-        guard let rootView = rootView, !processingScreenshot else { 
-            SentrySDKLog.debug("[Session Replay] Not taking screenshot, reason: root view is nil or processing screenshot")
-            return nil
+    private func takeScreenshot(timestamp: Date, completion: @escaping (TimeInterval) -> Void) -> Bool {
+        guard let rootView = rootView else {
+            SentrySDKLog.debug("[Session Replay] Not taking screenshot, reason: root view is nil")
+            return false
         }
         SentrySDKLog.debug("[Session Replay] Taking screenshot of root view: \(rootView)")
         
@@ -659,7 +729,7 @@ import UIKit
         guard !processingScreenshot else {
             SentrySDKLog.debug("[Session Replay] Not taking screenshot, reason: processing screenshot")
             lock.unlock()
-            return nil
+            return false
         }
         processingScreenshot = true
         lock.unlock()
@@ -668,11 +738,16 @@ import UIKit
         let screenName = delegate?.currentScreenNameForSessionReplay()
         let captureStart = dateProvider.systemTime()
         screenshotProvider.image(view: rootView) { [weak self] screenshot in
-            self?.newImage(timestamp: timestamp, maskedViewImage: screenshot, forScreen: screenName)
+            guard let self = self else { return }
+
+            let captureEnd = self.dateProvider.systemTime()
+            let captureDuration = captureEnd >= captureStart
+                ? TimeInterval(captureEnd - captureStart) / 1_000_000_000
+                : 0
+            self.newImage(timestamp: timestamp, maskedViewImage: screenshot, forScreen: screenName)
+            completion(captureDuration)
         }
-        let captureEnd = dateProvider.systemTime()
-        guard captureEnd >= captureStart else { return 0 }
-        return TimeInterval(captureEnd - captureStart) / 1_000_000_000
+        return true
     }
 
     private func newImage(timestamp: Date, maskedViewImage: UIImage, forScreen screen: String?) {
@@ -680,6 +755,14 @@ import UIKit
         lock.synchronized {
             processingScreenshot = false
             replayMaker.addFrameAsync(timestamp: timestamp, maskedViewImage: maskedViewImage, forScreen: screen)
+        }
+    }
+
+    private func runOnMainThread(_ block: @escaping () -> Void) {
+        if Thread.isMainThread {
+            block()
+        } else {
+            DispatchQueue.main.async(execute: block)
         }
     }
 }
