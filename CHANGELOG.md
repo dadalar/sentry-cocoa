@@ -40,6 +40,10 @@
   - Application Init: app.start -> app.start.application_init
   - Extended App Start: app.start -> app.start.extended_app_start
 
+### Improvements
+
+- Reduce Session Replay capture stutters by scheduling screenshots after run loop UI work instead of from display refresh callbacks (#7851)
+
 ### Deprecations
 
 - Deprecate the managed User Feedback widget/FAB. It will be removed in v10. Present the feedback form from your own UI with `SentrySDK.feedback.show()`, `SentrySDK.FeedbackForm`, or `.sentryFeedback(isPresented:)` instead. (#8022)
@@ -252,7 +256,6 @@
 ### Improvements
 
 - Remove `enableSessionReplayInUnreliableEnvironment` experimental option and the environment checker that temporarily disabled Session Replay on iOS 26 (#7831)
-- Reduce Session Replay capture stutters by scheduling screenshots after run loop UI work instead of from display refresh callbacks (#7851)
 
 ### Features
 
