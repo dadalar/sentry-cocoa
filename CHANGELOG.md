@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 9.17.0
 
 ### Features
 
@@ -43,6 +43,9 @@
 ### Improvements
 
 - Reduce Session Replay capture stutters by scheduling screenshots after run loop UI work instead of from display refresh callbacks (#7851)
+### Fixes
+
+- Silence retroactive conformance warning for `SentryLevel: CustomStringConvertible` when building with SPM from source (#8032)
 
 ### Deprecations
 
