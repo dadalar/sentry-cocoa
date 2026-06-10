@@ -150,10 +150,11 @@ import UIKit
         }
     }
 
-    func resumeSessionMode() {
+    func resumeSessionMode(restartCaptureScheduler: Bool = true) {
         SentrySDKLog.debug("[Session Replay] Resuming session mode")
         let shouldStartCaptureScheduler = lock.synchronized {
             isSessionPaused = false
+            guard restartCaptureScheduler else { return false }
             return prepareCaptureSchedulerResume()
         }
 
@@ -421,7 +422,9 @@ import UIKit
         guard !isCaptureSchedulerRunning else { return }
 
         isCaptureSchedulerRunning = true
-        installCaptureRunLoopObserver()
+        runOnMainThread { [weak self] in
+            self?.installCaptureRunLoopObserver()
+        }
     }
 
     private func stopCaptureScheduler() {
@@ -430,8 +433,10 @@ import UIKit
         nextCaptureActivityCheckAt = nil
 
         if let captureRunLoopObserver = captureRunLoopObserver {
-            CFRunLoopRemoveObserver(CFRunLoopGetMain(), captureRunLoopObserver, .commonModes)
             self.captureRunLoopObserver = nil
+            runOnMainThread {
+                CFRunLoopRemoveObserver(CFRunLoopGetMain(), captureRunLoopObserver, .commonModes)
+            }
         }
     }
 

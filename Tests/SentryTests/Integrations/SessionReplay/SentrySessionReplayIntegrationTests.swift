@@ -406,7 +406,25 @@ class SentrySessionReplayIntegrationTests: XCTestCase {
         sut.connectivityChanged(true, typeDescription: "")
         XCTAssertFalse(sut.sessionReplay?.isSessionPaused ?? false)
     }
-  
+
+    func testConnectivityReconnect_whenApplicationPaused_shouldWaitForForeground() throws {
+        startSDK(sessionSampleRate: 1, errorSampleRate: 0)
+        let sut = try getSut()
+        let sessionReplay = try XCTUnwrap(sut.sessionReplay)
+
+        sut.connectivityChanged(false, typeDescription: "")
+        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+
+        sut.connectivityChanged(true, typeDescription: "")
+
+        XCTAssertFalse(sessionReplay.isSessionPaused)
+        XCTAssertFalse(sessionReplay.isRunning)
+
+        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+
+        XCTAssertTrue(sessionReplay.isRunning)
+    }
+
     func testMaskViewFromSDK() throws {
         // -- Arrange --
         class AnotherLabel: UILabel {}

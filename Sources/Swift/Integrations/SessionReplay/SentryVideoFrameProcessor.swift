@@ -91,6 +91,11 @@ class SentryVideoFrameProcessor {
     ) -> Bool {
         let frame = videoFrames[frameIndex]
         guard let image = UIImage(contentsOfFile: frame.imagePath) else {
+            guard handleAppendResult(
+                appendLastFrame(until: frame.time, videoWriterInput: videoWriterInput),
+                onCompletion: onCompletion
+            ) else { return false }
+
             frameIndex += 1
             return true
         }

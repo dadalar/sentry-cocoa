@@ -34,6 +34,7 @@ public class SentrySessionReplayIntegration: NSObject, SwiftIntegration, SentryS
     private let replayFileManager: SessionReplayFileManager
     private var replayRecovery: SessionReplayRecovery?
     private var backgroundForegroundObserver: SentrySessionReplayBackgroundForegroundObserver?
+    private var isApplicationStatePaused = false
 
     /// Getter to get the current application at runtime
     ///
@@ -361,11 +362,13 @@ public class SentrySessionReplayIntegration: NSObject, SwiftIntegration, SentryS
     
     @objc public func pause() {
         SentrySDKLog.debug("[Session Replay] Pausing session")
+        isApplicationStatePaused = true
         sessionReplay?.pause()
     }
     
     @objc public func resume() {
         SentrySDKLog.debug("[Session Replay] Resuming session")
+        isApplicationStatePaused = false
         sessionReplay?.resume()
     }
 
@@ -480,7 +483,11 @@ public class SentrySessionReplayIntegration: NSObject, SwiftIntegration, SentryS
     // MARK: - SentryReachabilityObserver
     public func connectivityChanged(_ connected: Bool, typeDescription: String) {
         SentrySDKLog.debug("[Session Replay] Connectivity changed to: \(connected ? "connected" : "disconnected"), type: \(typeDescription)")
-        if connected { sessionReplay?.resumeSessionMode() } else { sessionReplay?.pauseSessionMode() }
+        if connected {
+            sessionReplay?.resumeSessionMode(restartCaptureScheduler: !isApplicationStatePaused)
+        } else {
+            sessionReplay?.pauseSessionMode()
+        }
     }
     
     // MARK: - Test only
