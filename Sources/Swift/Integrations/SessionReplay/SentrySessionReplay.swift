@@ -585,15 +585,6 @@ import UIKit
             videoSegmentStart ?? sessionStart ?? dateProvider.date().addingTimeInterval(-replayOptions.sessionSegmentDuration)
         }
         prepareSegment(from: segmentStart, until: date)
-        lock.synchronized {
-            guard let currentSegmentStart = videoSegmentStart else {
-                videoSegmentStart = date
-                return
-            }
-            if date > currentSegmentStart {
-                videoSegmentStart = date
-            }
-        }
     }
 
     @discardableResult
