@@ -624,6 +624,27 @@ class SentrySessionReplayTests: XCTestCase {
         Dynamic(sut).newFrame(nil)
         XCTAssertNotNil(fixture.replayMaker.lastCallToCreateVideo)
     }
+
+    func testPauseResume_whenSessionModePaused_shouldWaitForSessionModeResume() {
+        let fixture = Fixture()
+
+        let sut = fixture.getSut(options: SentryReplayOptions(sessionSampleRate: 1, onErrorSampleRate: 1))
+        sut.start(rootView: fixture.rootView, fullSession: true)
+
+        sut.pauseSessionMode()
+        sut.pause()
+        fixture.screenshotProvider.lastImageCall = nil
+
+        sut.resume()
+        fixture.dateProvider.advance(by: 1)
+        Dynamic(sut).newFrame(nil)
+        XCTAssertNil(fixture.screenshotProvider.lastImageCall)
+
+        sut.resume()
+        fixture.dateProvider.advance(by: 1)
+        Dynamic(sut).newFrame(nil)
+        XCTAssertNotNil(fixture.screenshotProvider.lastImageCall)
+    }
     
     func testPause_BufferSession() {
         let fixture = Fixture()

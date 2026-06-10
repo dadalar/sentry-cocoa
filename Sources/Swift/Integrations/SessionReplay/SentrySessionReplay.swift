@@ -132,7 +132,6 @@ import UIKit
                 pendingPauseSegmentEnd = pauseDate
             }
         }
-        isSessionPaused = false
         lock.unlock()
 
         if shouldPreparePauseSegment {
