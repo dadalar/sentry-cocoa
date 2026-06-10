@@ -18,6 +18,7 @@ import UIKit
     private let processingQueue: SentryDispatchQueueWrapper
     private let assetWorkerQueue: SentryDispatchQueueWrapper
     private var _frames = [SentryReplayFrame]()
+    private let retainedFrameLock = NSLock()
     private var retainedFrameBeforeCurrentFrames: SentryReplayFrame?
 
     #if SENTRY_TEST || SENTRY_TEST_CI || DEBUG
@@ -44,8 +45,13 @@ import UIKit
     }
 
     deinit {
-        if let retainedFrameBeforeCurrentFrames = retainedFrameBeforeCurrentFrames {
-            removeFrameFile(retainedFrameBeforeCurrentFrames)
+        let retainedFrame = retainedFrameLock.synchronized {
+            let frame = retainedFrameBeforeCurrentFrames
+            retainedFrameBeforeCurrentFrames = nil
+            return frame
+        }
+        if let retainedFrame = retainedFrame {
+            removeFrameFile(retainedFrame)
         }
     }
         
@@ -144,7 +150,10 @@ import UIKit
     }
 
     public var oldestFrameDate: Date? {
-        return retainedFrameBeforeCurrentFrames?.time ?? _frames.first?.time
+        let retainedFrame = retainedFrameLock.synchronized {
+            retainedFrameBeforeCurrentFrames
+        }
+        return retainedFrame?.time ?? _frames.first?.time
     }
 
     public func createVideoInBackgroundWith(beginning: Date, end: Date, completion: @escaping ([SentryVideoInfo]) -> Void) {
@@ -231,15 +240,18 @@ import UIKit
             return [frame(previousFrame, movedTo: beginning)]
         }
 
-        if firstFrame.time > beginning, let previousFrame = frameBefore(beginning) {
-            videoFrames.insert(frame(previousFrame, movedTo: beginning), at: 0)
+        if firstFrame.time > beginning {
+            let frameToHold = frameBefore(beginning) ?? firstFrame
+            videoFrames.insert(frame(frameToHold, movedTo: beginning), at: 0)
         }
 
         return videoFrames
     }
 
     private func frameBefore(_ date: Date) -> SentryReplayFrame? {
-        let retainedFrame = retainedFrameBeforeCurrentFrames.flatMap { $0.time < date ? $0 : nil }
+        let retainedFrame = retainedFrameLock.synchronized {
+            retainedFrameBeforeCurrentFrames
+        }.flatMap { $0.time < date ? $0 : nil }
         let currentFrame = _frames.last(where: { $0.time < date })
 
         switch (retainedFrame, currentFrame) {
@@ -259,11 +271,16 @@ import UIKit
     }
 
     private func replaceRetainedFrame(_ frame: SentryReplayFrame) {
-        if let retainedFrameBeforeCurrentFrames = retainedFrameBeforeCurrentFrames,
-            retainedFrameBeforeCurrentFrames.imagePath != frame.imagePath {
-            removeFrameFile(retainedFrameBeforeCurrentFrames)
+        let frameToRemove = retainedFrameLock.synchronized { () -> SentryReplayFrame? in
+            let previousFrame = retainedFrameBeforeCurrentFrames
+            retainedFrameBeforeCurrentFrames = frame
+            guard previousFrame?.imagePath != frame.imagePath else { return nil }
+            return previousFrame
         }
-        retainedFrameBeforeCurrentFrames = frame
+
+        if let frameToRemove = frameToRemove {
+            removeFrameFile(frameToRemove)
+        }
     }
 
     private func removeFrameFile(_ frame: SentryReplayFrame) {

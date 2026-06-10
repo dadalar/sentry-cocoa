@@ -83,9 +83,11 @@ import UIKit
         let now = dateProvider.date()
         resetCapturePacing(at: now)
         startCaptureScheduler()
-        videoSegmentStart = nil
-        pendingSegmentEnd = nil
-        pendingPauseSegmentEnd = nil
+        lock.synchronized {
+            videoSegmentStart = nil
+            pendingSegmentEnd = nil
+            pendingPauseSegmentEnd = nil
+        }
         currentSegmentId = 0
         sessionReplayId = SentryId()
         imageCollection = []
@@ -99,7 +101,9 @@ import UIKit
     private func startFullReplay(startedAt: Date?) {
         SentrySDKLog.debug("[Session Replay] Starting full session replay")
         sessionStart = startedAt
-        videoSegmentStart = startedAt
+        lock.synchronized {
+            videoSegmentStart = startedAt
+        }
         isFullSession = true
         guard let sessionReplayId = sessionReplayId else { return }
         delegate?.sessionReplayStarted(replayId: sessionReplayId)
@@ -116,19 +120,24 @@ import UIKit
     
     public func pause() {
         SentrySDKLog.debug("[Session Replay] Pausing session")
-        lock.lock()
-        defer { lock.unlock() }
-        
         stopCaptureScheduler()
+
+        let pauseDate = dateProvider.date()
+        var shouldPreparePauseSegment = false
+        lock.lock()
         if isFullSession {
-            let pauseDate = dateProvider.date()
             if pendingSegmentEnd == nil {
-                prepareSegmentUntil(date: pauseDate)
+                shouldPreparePauseSegment = true
             } else {
                 pendingPauseSegmentEnd = pauseDate
             }
         }
         isSessionPaused = false
+        lock.unlock()
+
+        if shouldPreparePauseSegment {
+            prepareSegmentUntil(date: pauseDate)
+        }
     }
 
     public func resume() {
@@ -572,9 +581,19 @@ import UIKit
     }
 
     private func prepareSegmentUntil(date: Date) {
-        let segmentStart = videoSegmentStart ?? sessionStart ?? dateProvider.date().addingTimeInterval(-replayOptions.sessionSegmentDuration)
+        let segmentStart = lock.synchronized {
+            videoSegmentStart ?? sessionStart ?? dateProvider.date().addingTimeInterval(-replayOptions.sessionSegmentDuration)
+        }
         prepareSegment(from: segmentStart, until: date)
-        videoSegmentStart = date
+        lock.synchronized {
+            guard let currentSegmentStart = videoSegmentStart else {
+                videoSegmentStart = date
+                return
+            }
+            if date > currentSegmentStart {
+                videoSegmentStart = date
+            }
+        }
     }
 
     @discardableResult
@@ -646,12 +665,14 @@ import UIKit
         }
         captureSegment(segment: currentSegmentId, video: videoInfo, replayId: sessionReplayId, replayType: replayType)
         replayMaker.releaseFramesUntil(videoInfo.end)
-        if let segmentStart = videoSegmentStart {
-            if videoInfo.end > segmentStart {
+        lock.synchronized {
+            if let segmentStart = videoSegmentStart {
+                if videoInfo.end > segmentStart {
+                    videoSegmentStart = videoInfo.end
+                }
+            } else {
                 videoSegmentStart = videoInfo.end
             }
-        } else {
-            videoSegmentStart = videoInfo.end
         }
         currentSegmentId++
         SentrySDKLog.debug("[Session Replay] Processed segment, incrementing currentSegmentId to: \(currentSegmentId)")

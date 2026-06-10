@@ -165,6 +165,28 @@ class SentryOnDemandReplayTests: XCTestCase {
         try FileManager.default.removeItem(at: info.path)
     }
 
+    func testGenerateVideo_whenFirstFrameIsAfterBeginning_shouldKeepSegmentDuration() throws {
+        // -- Arrange --
+        let sut = getSut()
+
+        let start = Date(timeIntervalSinceReferenceDate: 0)
+        sut.addFrameAsync(timestamp: start.addingTimeInterval(2), maskedViewImage: UIImage.add)
+
+        // -- Act --
+        let videos = sut.createVideoWith(beginning: start, end: start.addingTimeInterval(5))
+
+        // -- Assert --
+        XCTAssertEqual(videos.count, 1)
+        let info = try XCTUnwrap(videos.first)
+
+        XCTAssertEqual(info.duration, 5)
+        XCTAssertEqual(info.frameCount, 5)
+        XCTAssertEqual(info.start, start)
+        XCTAssertEqual(info.end, start.addingTimeInterval(5))
+
+        try FileManager.default.removeItem(at: info.path)
+    }
+
     func testGenerateVideo_whenFrameExistsAtEnd_shouldKeepSegmentDuration() throws {
         // -- Arrange --
         let sut = getSut()
