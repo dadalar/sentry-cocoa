@@ -1,10 +1,12 @@
 # Changelog
 
-## 9.17.0
+## Unreleased
 
 ### Fixes
 
 - Ship dSYMs in SentryObjC-Dynamic.xcframework artifacts (#8035)
+
+## 9.17.0
 
 ### Features
 
