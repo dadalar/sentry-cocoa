@@ -4,7 +4,7 @@
 
 ### Fixes
 
-- Ship dSYMs in SentryObjC-Dynamic.xcframework artifacts (#8035)
+- Ship dSYMs in SentryObjC-Dynamic.xcframework artifacts (#8036)
 
 ## 9.17.0
 
