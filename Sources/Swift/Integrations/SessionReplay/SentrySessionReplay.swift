@@ -102,11 +102,24 @@ import UIKit
         SentrySDKLog.debug("[Session Replay] Pausing session mode")
         lock.lock()
         defer { lock.unlock() }
-        
+
         self.isSessionPaused = true
         self.videoSegmentStart = nil
     }
-    
+
+    /// Clears a session-mode pause (see ``pauseSessionMode()``) without restarting capture.
+    ///
+    /// Use this instead of ``resume()`` when connectivity returns while the application is
+    /// backgrounded: capture must stay stopped until the app becomes active again, but the
+    /// session-mode pause state has to be cleared so the foreground ``resume()`` restarts capture.
+    public func resumeSessionMode() {
+        SentrySDKLog.debug("[Session Replay] Resuming session mode")
+        lock.lock()
+        defer { lock.unlock() }
+
+        isSessionPaused = false
+    }
+
     public func pause() {
         SentrySDKLog.debug("[Session Replay] Pausing session")
         lock.lock()

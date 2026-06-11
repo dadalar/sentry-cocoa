@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- Session replay no longer restarts capture in the background when connectivity returns while the app is backgrounded
+
 ## 9.17.0
 
 ### Features
